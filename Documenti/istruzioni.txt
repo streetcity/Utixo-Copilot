@@ -4,5 +4,7 @@ cd C:\Users\proprietario\OneDrive\Documenti\GitHub\Utixo-Copilot\Codice
 e eseguite:
 venv\Scripts\activate
 
+attivate apache e mysql su xampp
+
 entrate nel venv e fate:
 python app.py
