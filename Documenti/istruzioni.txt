@@ -1,0 +1,8 @@
+andate su (al massimo cambiate percorso per vostra cartella):
+cd C:\Users\proprietario\OneDrive\Documenti\GitHub\Utixo-Copilot\Codice
+
+e eseguite:
+venv\Scripts\activate
+
+entrate nel venv e fate:
+python app.py
