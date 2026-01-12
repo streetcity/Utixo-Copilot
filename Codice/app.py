@@ -33,7 +33,7 @@ pool = pooling.MySQLConnectionPool(pool_name="mypool", pool_size=5, **dbconfig)
 def db_conn():
     return pool.get_connection()
 
-# ===== Helpers DB =====
+# caricare tutte le possibili domande con le relative risposte dal database all'applicazione
 def get_all_faq():
     conn = db_conn()
     try:
@@ -43,6 +43,7 @@ def get_all_faq():
     finally:
         cur.close(); conn.close()
 
+# caricare in memoria tutti i log degli accessi e delle richieste degli utenti
 def insert_log(user_id, msg_utente, risposta):
     conn = db_conn()
     try:
