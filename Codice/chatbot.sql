@@ -69,21 +69,6 @@ CREATE TABLE `logs` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 --
--- Dump dei dati per la tabella `logs`
---
-
-INSERT INTO `logs` (`id`, `user_id`, `messaggio_utente`, `risposta_bot`, `data_ora`) VALUES
-(22, NULL, 'ciao chi sei?', 'Salve! In cosa posso esserti utile?', '2025-12-05 11:46:57'),
-(23, NULL, 'chi sei?', 'Non ho trovato una risposta precisa, puoi riformulare?', '2025-12-05 11:47:03'),
-(24, NULL, 'ciao', 'Ciao! Come posso aiutarti?', '2025-12-15 11:46:21'),
-(25, NULL, 'suca', 'Non ho trovato una risposta precisa, puoi riformulare?', '2025-12-15 11:46:36'),
-(26, NULL, 'addio', 'Non ho trovato una risposta precisa, puoi riformulare?', '2025-12-15 11:46:40'),
-(27, NULL, 'miao', 'Non ho trovato una risposta precisa, puoi riformulare?', '2025-12-15 11:46:45'),
-(28, NULL, 'come contatto assistenza?', 'L assistenza tecnica risponde tramite ticket: accedi alla tua area clienti e apri una richiesta.', '2025-12-15 11:51:00');
-
--- --------------------------------------------------------
-
---
 -- Struttura della tabella `utenti`
 --
 

@@ -1,6 +1,6 @@
-body {
+body{
       font-family: Arial;
-      background: rgb(224, 217, 225);
+      background: rgb(63, 84, 189);
 }
 
 h2{
@@ -8,7 +8,7 @@ h2{
     font-size: 2rem;
 }
 
-#chatbox {
+#chatbox{
     width: 900px;
     margin: 50px auto;
     background: white;
@@ -17,28 +17,27 @@ h2{
     border-radius: 10px;
 }
 
-#messages {
+#messages{
     height: 400px;
-    overflow-y: auto;
     border: 1px solid #ccc;
     padding: 10px;
 }
 
-.user {
+.user{
     color: blue;
 }
 
-.bot {
+.bot{
     color: green;
 }
 
-#userInput {
+#userInput{
     width: 90%;
     padding: 5px;
     margin-top: 20px;
     margin-right: 10px;
 }
 
-button {
+button{
     padding: 5px 10px;
 }

@@ -1,10 +1,12 @@
+aprite il terminale (cmd) di windows
+
 andate su (al massimo cambiate percorso per vostra cartella):
 cd C:\Users\proprietario\OneDrive\Documenti\GitHub\Utixo-Copilot\Codice
 
 e eseguite:
 venv\Scripts\activate
 
-attivate apache e mysql su xampp
+attivate apache e mysql su xampp (importate db o no otterrete nessuna risposta)
 
 entrate nel venv e fate:
 python app.py
