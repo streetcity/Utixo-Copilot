@@ -1,7 +1,7 @@
 async function sendMessage(){
     const input = document.getElementById("userInput");
     const message = input.value;
-    if (message.trim() === "") return;
+    if (message.trim() == "") return;
 
     //mostra messaggio utente
     const msgBox = document.getElementById("messages");
