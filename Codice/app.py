@@ -111,11 +111,6 @@ def admin_required():
 
 
 def insert_log_message(user_msg: str, reply: str, best_score: float, matched_id):
-    """
-    Inserisce SEMPRE similarity/faq_id/resolved se le colonne esistono.
-    Non dipende da information_schema (che può essere bloccato).
-    Fa fallback automatico se schema vecchio.
-    """
     try:
         conn = get_connection()
         cur = conn.cursor()
@@ -217,7 +212,7 @@ def message():
         reply = random.choice(risposte) if risposte else "Non ho una risposta precisa."
         matched_id = best_row["id"]
 
-    # ✅ Salvo log (ora inserisce davvero similarity/faq_id/resolved quando esistono)
+    # Salvo log
     insert_log_message(user_msg=user_msg, reply=reply, best_score=best_score, matched_id=matched_id)
 
     return jsonify(
