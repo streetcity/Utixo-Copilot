@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="it">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Login Admin - Utixo Copilot</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/admin.css" />
+</head>
+<body class="admin-login-body">
+  <div class="admin-login-card">
+    <div class="admin-login-header">
+      <div class="admin-dot"></div>
+      <h1>Utixo Copilot</h1>
+      <p class="admin-muted" style="margin:0">Accesso amministratore</p>
+    </div>
+
+    {% if error %}
+      <div class="admin-alert">{{ error }}</div>
+    {% endif %}
+
+    <form method="post" action="/admin/login" class="admin-form" autocomplete="off" style="margin-top:10px">
+      <label>
+        <span>Username</span>
+        <input name="username" type="text" autocomplete="username" required />
+      </label>
+      <label>
+        <span>Password</span>
+        <input name="password" type="password" autocomplete="current-password" required />
+      </label>
+      <button type="submit" class="admin-btn-primary">Entra</button>
+    </form>
+
+    <div class="admin-footnote">
+      <a href="/" style="color:inherit; text-decoration:none">← Torna al sito</a>
+    </div>
+  </div>
+</body>
+</html>

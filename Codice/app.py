@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import os
 import random
+import re
+import hashlib
 from datetime import timedelta
-from typing import Dict
+from typing import Dict, Optional, Tuple, Any
 
 import mysql.connector
 from mysql.connector import Error as MySQLError
@@ -12,12 +14,14 @@ from flask import (
     Flask,
     jsonify,
     redirect,
+    render_template,
     render_template_string,
     request,
     send_from_directory,
     session,
     url_for,
 )
+from werkzeug.security import generate_password_hash, check_password_hash
 
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
@@ -43,6 +47,9 @@ DB_NAME = os.getenv("DB_NAME", "chatbot")
 DB_PORT = int(os.getenv("DB_PORT", "3306"))
 
 SIM_THRESHOLD = float(os.getenv("SIM_THRESHOLD", "0.25"))
+
+# Admin hard-allowlist (username). Default: admin
+ADMIN_USERS = {u.strip() for u in (os.getenv("ADMIN_USERS", "admin") or "admin").split(",") if u.strip()}
 
 STOPWORDS = [
     "a", "ad", "al", "alla", "alle", "allo", "ai", "agli", "anche", "che", "chi", "ci", "con", "come",
@@ -97,7 +104,6 @@ def _has_column(conn, table: str, column: str) -> bool:
         exists = (cur.fetchone()[0] or 0) > 0
         cur.close()
     except Exception:
-        # se non hai permessi su information_schema, meglio non rompere tutto:
         exists = False
 
     _SCHEMA_CACHE[key][column] = bool(exists)
@@ -110,7 +116,102 @@ def admin_required():
     return None
 
 
-def insert_log_message(user_msg: str, reply: str, best_score: float, matched_id):
+def current_user() -> Optional[Dict[str, Any]]:
+    uid = session.get("user_id")
+    if not uid:
+        return None
+    return {"id": int(uid), "username": session.get("username") or ""}
+
+
+def _is_legacy_sha256_hash(pw: str) -> bool:
+    return bool(re.fullmatch(r"[0-9a-fA-F]{64}", pw or ""))
+
+
+def verify_password(stored_password: str, plain_password: str) -> Tuple[bool, bool]:
+    """Return (ok, needs_upgrade). Supports both legacy SHA256 hex and werkzeug hashes."""
+    stored_password = stored_password or ""
+    plain_password = plain_password or ""
+
+    # Werkzeug hashes
+    if stored_password.startswith(("scrypt:", "pbkdf2:", "argon2:")):
+        try:
+            return (check_password_hash(stored_password, plain_password), False)
+        except Exception:
+            return (False, False)
+
+    # Legacy SHA256 hex
+    if _is_legacy_sha256_hash(stored_password):
+        digest = hashlib.sha256(plain_password.encode("utf-8")).hexdigest()
+        ok = digest.lower() == stored_password.lower()
+        return (ok, ok)  # if ok -> upgrade
+
+    return (False, False)
+
+
+def maybe_upgrade_password(conn, user_id: int, stored_password: str, plain_password: str) -> None:
+    ok, needs_upgrade = verify_password(stored_password, plain_password)
+    if not ok or not needs_upgrade:
+        return
+    try:
+        new_hash = generate_password_hash(plain_password)
+        cur = conn.cursor()
+        cur.execute("UPDATE utenti SET password=%s WHERE id=%s", (new_hash, int(user_id)))
+        conn.commit()
+        cur.close()
+    except Exception:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+
+
+def create_conversation(conn, user_id: int, title: str) -> int:
+    title = (title or "").strip() or "Nuova chat"
+    title = title[:120]
+    cur = conn.cursor()
+    cur.execute(
+        "INSERT INTO conversations (user_id, title, created_at, updated_at) VALUES (%s, %s, NOW(), NOW())",
+        (int(user_id), title),
+    )
+    conn.commit()
+    cid = int(cur.lastrowid)
+    cur.close()
+    return cid
+
+
+def ensure_conversation_belongs(conn, conversation_id: int, user_id: int) -> bool:
+    cur = conn.cursor()
+    cur.execute(
+        "SELECT id FROM conversations WHERE id=%s AND user_id=%s LIMIT 1",
+        (int(conversation_id), int(user_id)),
+    )
+    row = cur.fetchone()
+    cur.close()
+    return bool(row)
+
+
+def touch_conversation(conn, conversation_id: int) -> None:
+    try:
+        cur = conn.cursor()
+        cur.execute("UPDATE conversations SET updated_at=NOW() WHERE id=%s", (int(conversation_id),))
+        conn.commit()
+        cur.close()
+    except Exception:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+
+
+def insert_log_message(
+    user_msg: str,
+    reply: str,
+    best_score: float,
+    matched_id,
+    user_id: Optional[int] = None,
+    conversation_id: Optional[int] = None,
+):
+    """Inserisce un log compatibile con schema vecchio e schema nuovo (con conversation_id)."""
     try:
         conn = get_connection()
         cur = conn.cursor()
@@ -118,43 +219,41 @@ def insert_log_message(user_msg: str, reply: str, best_score: float, matched_id)
         resolved = 1 if matched_id else 0
         faq_id_val = matched_id  # può essere None
 
-        # 1) tentativo con schema nuovo
-        try:
+        has_conv = _has_column(conn, "logs", "conversation_id")
+
+        if has_conv:
+            cur.execute(
+                "INSERT INTO logs (user_id, conversation_id, messaggio_utente, risposta_bot, similarity, faq_id, resolved) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s)",
+                (
+                    int(user_id) if user_id else None,
+                    int(conversation_id) if conversation_id else None,
+                    user_msg,
+                    reply,
+                    round(float(best_score), 6),
+                    faq_id_val,
+                    resolved,
+                ),
+            )
+        else:
             cur.execute(
                 "INSERT INTO logs (user_id, messaggio_utente, risposta_bot, similarity, faq_id, resolved) "
                 "VALUES (%s, %s, %s, %s, %s, %s)",
-                (None, user_msg, reply, round(float(best_score), 6), faq_id_val, resolved),
+                (int(user_id) if user_id else None, user_msg, reply, round(float(best_score), 6), faq_id_val, resolved),
             )
-            conn.commit()
-            cur.close()
-            conn.close()
-            return
-        except MySQLError as e:
-            # se mancano colonne nello schema, fallback
-            msg = str(e).lower()
-            if ("unknown column" in msg) or ("has no default" in msg) or ("doesn't have a default" in msg):
-                conn.rollback()
-            else:
-                # altri errori: riprovo comunque col fallback, ma non blocco l'utente
-                try:
-                    conn.rollback()
-                except Exception:
-                    pass
 
-        # 2) fallback schema vecchio
-        try:
-            cur.execute(
-                "INSERT INTO logs (user_id, messaggio_utente, risposta_bot) VALUES (%s, %s, %s)",
-                (None, user_msg, reply),
-            )
-            conn.commit()
-        finally:
-            cur.close()
-            conn.close()
-
+        conn.commit()
+        cur.close()
+        conn.close()
     except Exception:
-        # Non blocco il cliente se logging fallisce
-        pass
+        try:
+            cur.close()
+        except Exception:
+            pass
+        try:
+            conn.close()
+        except Exception:
+            pass
 
 
 # =========================
@@ -162,7 +261,6 @@ def insert_log_message(user_msg: str, reply: str, best_score: float, matched_id)
 # =========================
 @app.get("/")
 def site_home():
-    # Sito principale + UI chat
     return send_from_directory(STATIC_DIR, "index.html")
 
 
@@ -171,13 +269,257 @@ def health():
     return jsonify({"ok": True})
 
 
-@app.post("/message")
-def message():
+# =========================
+# Auth (users)
+# =========================
+@app.get("/auth/me")
+def auth_me():
+    return jsonify({"user": current_user()})
+
+
+@app.post("/auth/register")
+def auth_register():
+    data = request.get_json(silent=True) or {}
+    username = (data.get("username") or "").strip()
+    password = (data.get("password") or "").strip()
+    email = (data.get("email") or "").strip() or None
+
+    if not username or not password:
+        return jsonify({"ok": False, "error": "Inserisci username e password."}), 400
+    if len(username) < 3:
+        return jsonify({"ok": False, "error": "Lo username deve avere almeno 3 caratteri."}), 400
+    if len(password) < 8:
+        return jsonify({"ok": False, "error": "La password deve avere almeno 8 caratteri."}), 400
+
+    pw_hash = generate_password_hash(password)
+
+    conn = get_connection()
+    cur = conn.cursor(dictionary=True)
+
+    cur.execute("SELECT id FROM utenti WHERE nome=%s LIMIT 1", (username,))
+    if cur.fetchone():
+        cur.close()
+        conn.close()
+        return jsonify({"ok": False, "error": "Username già in uso."}), 409
+
+    if email:
+        cur.execute("SELECT id FROM utenti WHERE email=%s LIMIT 1", (email,))
+        if cur.fetchone():
+            cur.close()
+            conn.close()
+            return jsonify({"ok": False, "error": "Email già in uso."}), 409
+
+    cur2 = conn.cursor()
+    cur2.execute(
+        "INSERT INTO utenti (nome, password, email, data_creazione) VALUES (%s, %s, %s, NOW())",
+        (username, pw_hash, email),
+    )
+    conn.commit()
+    user_id = int(cur2.lastrowid)
+    cur2.close()
+    cur.close()
+    conn.close()
+
+    # auto-login
+    session.permanent = True
+    session["user_id"] = user_id
+    session["username"] = username
+
+    return jsonify({"ok": True, "user": {"id": user_id, "username": username}})
+
+
+@app.post("/auth/login")
+def auth_login():
+    data = request.get_json(silent=True) or {}
+    username = (data.get("username") or "").strip()
+    password = (data.get("password") or "").strip()
+
+    if not username or not password:
+        return jsonify({"ok": False, "error": "Inserisci username e password."}), 400
+
+    conn = get_connection()
+    cur = conn.cursor(dictionary=True)
+    cur.execute("SELECT id, nome, password, email FROM utenti WHERE nome=%s LIMIT 1", (username,))
+    row = cur.fetchone()
+    cur.close()
+
+    if not row:
+        conn.close()
+        return jsonify({"ok": False, "error": "Credenziali non valide."}), 401
+
+    ok, _needs = verify_password(row.get("password") or "", password)
+    if not ok:
+        conn.close()
+        return jsonify({"ok": False, "error": "Credenziali non valide."}), 401
+
+    maybe_upgrade_password(conn, int(row["id"]), row.get("password") or "", password)
+    conn.close()
+
+    session.permanent = True
+    session["user_id"] = int(row["id"])
+    session["username"] = row.get("nome") or username
+
+    return jsonify({"ok": True, "user": {"id": int(row["id"]), "username": session["username"]}})
+
+
+@app.post("/auth/logout")
+def auth_logout():
+    for k in ["user_id", "username"]:
+        session.pop(k, None)
+    return jsonify({"ok": True})
+
+
+# =========================
+# Conversations API
+# =========================
+@app.get("/api/conversations")
+def api_conversations():
+    user = current_user()
+    if not user:
+        return jsonify({"ok": False, "error": "Non autenticato"}), 401
+
+    conn = get_connection()
+    cur = conn.cursor(dictionary=True)
+    cur.execute(
+        "SELECT id, title, created_at, updated_at FROM conversations WHERE user_id=%s ORDER BY updated_at DESC",
+        (int(user["id"]),),
+    )
+    rows = cur.fetchall()
+    cur.close()
+    conn.close()
+
+    return jsonify({"ok": True, "conversations": rows})
+
+
+@app.post("/api/conversations/new")
+def api_conversations_new():
+    user = current_user()
+    if not user:
+        return jsonify({"ok": False, "error": "Non autenticato"}), 401
+
+    data = request.get_json(silent=True) or {}
+    title = (data.get("title") or "").strip() or "Nuova chat"
+
+    conn = get_connection()
+    cid = create_conversation(conn, int(user["id"]), title)
+    conn.close()
+
+    return jsonify({"ok": True, "conversation_id": cid})
+
+
+@app.post("/api/conversations/select")
+def api_conversations_select():
+    user = current_user()
+    if not user:
+        return jsonify({"ok": False, "error": "Non autenticato"}), 401
+
+    data = request.get_json(silent=True) or {}
+    conversation_id = data.get("conversation_id")
+
+    if not conversation_id:
+        return jsonify({"ok": False, "error": "conversation_id mancante"}), 400
+
+    conn = get_connection()
+    ok = ensure_conversation_belongs(conn, int(conversation_id), int(user["id"]))
+    conn.close()
+
+    if not ok:
+        return jsonify({"ok": False, "error": "Conversazione non trovata"}), 404
+
+    return jsonify({"ok": True, "conversation_id": int(conversation_id)})
+
+
+@app.get("/api/conversations/<int:conversation_id>/messages")
+def api_conversation_messages(conversation_id: int):
+    user = current_user()
+    if not user:
+        return jsonify({"ok": False, "error": "Non autenticato"}), 401
+
+    conn = get_connection()
+    ok = ensure_conversation_belongs(conn, int(conversation_id), int(user["id"]))
+    if not ok:
+        conn.close()
+        return jsonify({"ok": False, "error": "Conversazione non trovata"}), 404
+
+    # logs: recupera ultimi messaggi per questa conversazione (se colonna esiste)
+    has_conv = _has_column(conn, "logs", "conversation_id")
+    cur = conn.cursor(dictionary=True)
+
+    if has_conv:
+        cur.execute(
+            """
+            SELECT id, data_ora, messaggio_utente, risposta_bot, similarity, faq_id, resolved
+            FROM logs
+            WHERE user_id=%s AND conversation_id=%s
+            ORDER BY id ASC
+            LIMIT 500
+            """,
+            (int(user["id"]), int(conversation_id)),
+        )
+    else:
+        # fallback: non possiamo filtrare per conversation_id
+        cur.execute(
+            """
+            SELECT id, data_ora, messaggio_utente, risposta_bot, similarity, faq_id, resolved
+            FROM logs
+            WHERE user_id=%s
+            ORDER BY id DESC
+            LIMIT 200
+            """,
+            (int(user["id"]),),
+        )
+
+    rows = cur.fetchall()
+    cur.close()
+    conn.close()
+
+    return jsonify({"ok": True, "messages": rows})
+
+
+# =========================
+# Static assets
+# =========================
+@app.get("/static/<path:filename>")
+def static_files(filename: str):
+    return send_from_directory(STATIC_DIR, filename)
+
+
+# =========================
+# Chat endpoint
+# =========================
+@app.post("/chat")
+def chat():
     data = request.get_json(silent=True) or {}
     user_msg = (data.get("message") or "").strip()
+    conversation_id = data.get("conversation_id")
 
-    if user_msg == "":
-        return jsonify({"reply": "Non ho ricevuto alcun messaggio.", "faq_matched_id": None})
+    user = current_user()
+    user_id = int(user["id"]) if user else None
+
+    if not user_msg:
+        return jsonify({"reply": "Scrivi un messaggio valido.", "faq_matched_id": None, "conversation_id": conversation_id})
+
+    # Se loggato e non c'è conversation_id -> creane una nuova
+    if user_id and not conversation_id:
+        try:
+            conn = get_connection()
+            # titolo dalla prima frase
+            title = user_msg[:60].strip() or "Nuova chat"
+            conversation_id = create_conversation(conn, user_id, title)
+            conn.close()
+        except Exception:
+            conversation_id = None
+
+    # Se conversation_id presente, verifica appartenenza
+    if user_id and conversation_id:
+        try:
+            conn = get_connection()
+            ok = ensure_conversation_belongs(conn, int(conversation_id), user_id)
+            conn.close()
+            if not ok:
+                conversation_id = None
+        except Exception:
+            conversation_id = None
 
     # Prendo tutte le FAQ
     conn = get_connection()
@@ -188,13 +530,13 @@ def message():
     conn.close()
 
     if not faqs:
-        return jsonify({"reply": "Al momento non ho contenuti disponibili.", "faq_matched_id": None})
+        return jsonify({"reply": "Al momento non ho contenuti disponibili.", "faq_matched_id": None, "conversation_id": conversation_id})
 
     domande_pulite = [clean_text(row["domanda"]) for row in faqs]
     user_clean = clean_text(user_msg)
 
     if user_clean == "":
-        return jsonify({"reply": "Puoi riformulare con più dettagli?", "faq_matched_id": None})
+        return jsonify({"reply": "Puoi riformulare con più dettagli?", "faq_matched_id": None, "conversation_id": conversation_id})
 
     vectorizer = TfidfVectorizer()
     X = vectorizer.fit_transform(domande_pulite + [user_clean])
@@ -212,95 +554,41 @@ def message():
         reply = random.choice(risposte) if risposte else "Non ho una risposta precisa."
         matched_id = best_row["id"]
 
-    # Salvo log
-    insert_log_message(user_msg=user_msg, reply=reply, best_score=best_score, matched_id=matched_id)
+    insert_log_message(
+        user_msg=user_msg,
+        reply=reply,
+        best_score=best_score,
+        matched_id=matched_id,
+        user_id=user_id,
+        conversation_id=conversation_id,
+    )
+
+    if user_id and conversation_id:
+        try:
+            conn = get_connection()
+            touch_conversation(conn, conversation_id)
+            conn.close()
+        except Exception:
+            pass
 
     return jsonify(
         {
             "reply": reply,
             "faq_matched_id": matched_id,
             "similarity": round(best_score, 3),
+            "conversation_id": conversation_id,
         }
     )
 
 
 # =========================
-# Admin UI (server-rendered)
+# Admin UI (templates)
 # =========================
-ADMIN_BASE_HTML = r"""
-<!doctype html>
-<html lang="it">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>{{ title }}</title>
-  <link rel="stylesheet" href="/static/admin.css" />
-</head>
-<body>
-  <header class="admin-topbar">
-    <div class="admin-topbar-inner">
-      <div class="admin-brand">
-        <span class="admin-dot"></span>
-        <strong>Utixo Copilot</strong>
-        <span class="admin-badge">Admin</span>
-      </div>
-      <nav class="admin-nav">
-        <a href="/admin">Report</a>
-        <a href="/admin/faqs">FAQ</a>
-        <a href="/admin/logout" class="admin-nav-danger">Logout</a>
-      </nav>
-    </div>
-  </header>
-
-  <main class="admin-main">
-    {{ content | safe }}
-  </main>
-
-  <script src="/static/admin.js" defer></script>
-</body>
-</html>
-"""
-
-LOGIN_HTML = r"""
-<!doctype html>
-<html lang="it">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Login Admin - Utixo Copilot</title>
-  <link rel="stylesheet" href="/static/admin.css" />
-</head>
-<body class="admin-login-body">
-  <div class="admin-login-card">
-    <h1>Admin Login</h1>
-    <p class="admin-muted">Accedi per gestire FAQ e report.</p>
-
-    {% if error %}
-      <div class="admin-alert">{{ error }}</div>
-    {% endif %}
-
-    <form method="post" class="admin-form">
-      <label>Nome utente</label>
-      <input name="username" autocomplete="username" required />
-
-      <label>Password</label>
-      <input name="password" type="password" autocomplete="current-password" required />
-
-      <button type="submit" class="admin-btn-primary">Accedi</button>
-    </form>
-
-    <div class="admin-footnote">Utixo Copilot • Pannello amministrazione</div>
-  </div>
-</body>
-</html>
-"""
-
-
 @app.get("/admin/login")
 def admin_login():
     if session.get("admin_user_id"):
         return redirect(url_for("admin_dashboard"))
-    return render_template_string(LOGIN_HTML, error=None)
+    return render_template("admin_login.html", error=None)
 
 
 @app.post("/admin/login")
@@ -309,35 +597,34 @@ def admin_login_post():
     password = (request.form.get("password") or "").strip()
 
     if not username or not password:
-        return render_template_string(LOGIN_HTML, error="Inserisci username e password.")
+        return render_template("admin_login.html", error="Inserisci username e password.")
 
-    # ✅ Login su tabella "utenti" con SHA256 lato DB:
-    #    password in DB = SHA2('plain', 256)
+    # Admin consentiti solo in allowlist (env ADMIN_USERS, default: admin)
+    if username not in ADMIN_USERS:
+        return render_template("admin_login.html", error="Utente non autorizzato.")
+
     conn = get_connection()
     cur = conn.cursor(dictionary=True)
-
-    cur.execute(
-        """
-        SELECT id, nome, email
-        FROM utenti
-        WHERE nome = %s
-          AND password = SHA2(%s, 256)
-        LIMIT 1
-        """,
-        (username, password),
-    )
+    cur.execute("SELECT id, nome, password, email FROM utenti WHERE nome=%s LIMIT 1", (username,))
     row = cur.fetchone()
-
     cur.close()
-    conn.close()
 
     if not row:
-        return render_template_string(LOGIN_HTML, error="Credenziali non valide.")
+        conn.close()
+        return render_template("admin_login.html", error="Credenziali non valide.")
+
+    ok, _needs = verify_password(row.get("password") or "", password)
+    if not ok:
+        conn.close()
+        return render_template("admin_login.html", error="Credenziali non valide.")
+
+    maybe_upgrade_password(conn, int(row["id"]), row.get("password") or "", password)
+    conn.close()
 
     session.permanent = True
     session["admin_user_id"] = int(row["id"])
     session["admin_username"] = row.get("nome") or username
-    session["admin_email"] = row.get("email") or ""  # ✅ era "mail"
+    session["admin_email"] = row.get("email") or ""
     return redirect(url_for("admin_dashboard"))
 
 
@@ -347,6 +634,9 @@ def admin_logout():
     return redirect(url_for("admin_login"))
 
 
+# -------------------------
+# (RESTO ADMIN INVARIATO)
+# -------------------------
 @app.get("/admin")
 def admin_dashboard():
     redir = admin_required()
@@ -360,130 +650,45 @@ def admin_dashboard():
     faq_count = int(cur.fetchone()["c"])
 
     cur.execute("SELECT COUNT(*) AS c FROM logs")
-    logs_count = int(cur.fetchone()["c"])
+    log_count = int(cur.fetchone()["c"])
 
-    has_resolved = _has_column(conn, "logs", "resolved")
-    has_similarity = _has_column(conn, "logs", "similarity")
+    cur.execute(
+        """
+        SELECT DATE(data_ora) AS d, COUNT(*) AS c
+        FROM logs
+        GROUP BY DATE(data_ora)
+        ORDER BY d DESC
+        LIMIT 14
+        """
+    )
+    daily = cur.fetchall()
 
-    resolved_count = None
-    unresolved_count = None
-    if has_resolved:
-        cur.execute("SELECT COUNT(*) AS c FROM logs WHERE resolved=1")
-        resolved_count = int(cur.fetchone()["c"])
-        cur.execute("SELECT COUNT(*) AS c FROM logs WHERE resolved=0")
-        unresolved_count = int(cur.fetchone()["c"])
-
-    # ultimi log
-    if has_similarity:
-        cur.execute(
-            "SELECT data_ora, messaggio_utente, risposta_bot, similarity, "
-            + ("resolved " if has_resolved else "NULL AS resolved ")
-            + "FROM logs ORDER BY id DESC LIMIT 20"
-        )
-    else:
-        cur.execute(
-            "SELECT data_ora, messaggio_utente, risposta_bot, NULL AS similarity, "
-            + ("resolved " if has_resolved else "NULL AS resolved ")
-            + "FROM logs ORDER BY id DESC LIMIT 20"
-        )
-    latest = cur.fetchall()
+    cur.execute(
+        """
+        SELECT resolved, COUNT(*) AS c
+        FROM logs
+        GROUP BY resolved
+        """
+    )
+    resolved_rows = cur.fetchall()
 
     cur.close()
     conn.close()
 
-    cards = []
-    cards.append(f"""
-      <div class="admin-card">
-        <div class="admin-kpi">
-          <div>
-            <div class="admin-kpi-label">FAQ totali</div>
-            <div class="admin-kpi-value">{faq_count}</div>
-          </div>
-        </div>
-      </div>
-    """)
-    cards.append(f"""
-      <div class="admin-card">
-        <div class="admin-kpi">
-          <div>
-            <div class="admin-kpi-label">Messaggi ricevuti</div>
-            <div class="admin-kpi-value">{logs_count}</div>
-          </div>
-        </div>
-      </div>
-    """)
-    if resolved_count is not None and unresolved_count is not None:
-        cards.append(f"""
-          <div class="admin-card">
-            <div class="admin-kpi">
-              <div>
-                <div class="admin-kpi-label">Risposte trovate</div>
-                <div class="admin-kpi-value">{resolved_count}</div>
-              </div>
-            </div>
-          </div>
-        """)
-        cards.append(f"""
-          <div class="admin-card">
-            <div class="admin-kpi">
-              <div>
-                <div class="admin-kpi-label">Non risolte</div>
-                <div class="admin-kpi-value">{unresolved_count}</div>
-              </div>
-            </div>
-          </div>
-        """)
+    resolved_map = {int(r["resolved"]): int(r["c"]) for r in resolved_rows}
+    resolved_ok = resolved_map.get(1, 0)
+    resolved_no = resolved_map.get(0, 0)
 
-    rows_html = ""
-    for r in latest:
-        dt = str(r.get("data_ora") or "")
-        msg = (r.get("messaggio_utente") or "")[:140]
-        rep = (r.get("risposta_bot") or "")[:140]
-        simv = r.get("similarity")
-        sim_txt = f"{float(simv):.3f}" if simv is not None else "-"
-        resv = r.get("resolved")
-        badge = ""
-        if resv is not None:
-            badge = '<span class="pill ok">OK</span>' if int(resv) == 1 else '<span class="pill warn">NO</span>'
-        rows_html += f"""
-          <tr>
-            <td class="mono">{dt}</td>
-            <td>{msg}</td>
-            <td>{rep}</td>
-            <td class="mono">{sim_txt}</td>
-            <td>{badge}</td>
-          </tr>
-        """
-
-    content = f"""
-      <h1>Report</h1>
-      <p class="admin-muted">Panoramica su FAQ e richieste ricevute.</p>
-
-      <div class="admin-grid">
-        {''.join(cards)}
-      </div>
-
-      <div class="admin-card admin-card-wide">
-        <div class="admin-card-title">Ultimi messaggi</div>
-        <div class="admin-table-wrap">
-          <table class="admin-table">
-            <thead>
-              <tr>
-                <th>Data</th>
-                <th>Messaggio utente</th>
-                <th>Risposta bot</th>
-                <th>Sim</th>
-                <th>Esito</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows_html if rows_html else '<tr><td colspan="5" class="admin-muted">Nessun log disponibile.</td></tr>'}
-            </tbody>
-          </table>
-        </div>
-      </div>
-    """
-    return render_template_string(ADMIN_BASE_HTML, title="Admin • Report", content=content)
+    return render_template(
+        "admin_dashboard.html",
+        title="Admin - Report",
+        faq_count=faq_count,
+        log_count=log_count,
+        resolved_ok=resolved_ok,
+        resolved_no=resolved_no,
+        daily=daily,
+        admin_username=session.get("admin_username") or "admin",
+    )
 
 
 @app.get("/admin/faqs")
@@ -494,121 +699,65 @@ def admin_faqs():
 
     conn = get_connection()
     cur = conn.cursor(dictionary=True)
-    cur.execute("SELECT id, categoria, domanda, risposta1, risposta2, risposta3 FROM faq ORDER BY id DESC")
-    faqs = cur.fetchall()
+    cur.execute("SELECT id, categoria, domanda, data_aggiornamento FROM faq ORDER BY id DESC")
+    rows = cur.fetchall()
     cur.close()
     conn.close()
 
-    table_rows = ""
-    for f in faqs:
-        fid = int(f["id"])
-        cat = (f.get("categoria") or "generale")
-        dom = (f.get("domanda") or "")[:120]
-        table_rows += f"""
-        <tr>
-          <td class="mono">{fid}</td>
-          <td>{cat}</td>
-          <td>{dom}</td>
-          <td class="admin-actions">
-            <button class="admin-btn" data-edit="{fid}">Modifica</button>
-          </td>
-        </tr>
-        """
+    # Troncamento domanda lato server per tabella
+    for r in rows:
+        d = (r.get("domanda") or "")
+        if len(d) > 120:
+            r["domanda_short"] = d[:120] + "…"
+        else:
+            r["domanda_short"] = d
 
-    content = f"""
-      <h1>FAQ</h1>
-      <p class="admin-muted">Aggiungi e modifica le risposte del Copilot.</p>
+    return render_template(
+        "admin_faqs.html",
+        title="Admin - FAQ",
+        rows=rows,
+        admin_username=session.get("admin_username") or "admin",
+    )
 
-      <div class="admin-split">
-        <div class="admin-card">
-          <div class="admin-card-title">Aggiungi FAQ</div>
-          <form method="post" action="/admin/faqs/new" class="admin-form">
-            <label>Categoria</label>
-            <input name="categoria" placeholder="es. Microsoft 365" />
 
-            <label>Domanda</label>
-            <textarea name="domanda" rows="3" required placeholder="Scrivi la domanda (come la farebbe un cliente)"></textarea>
-
-            <label>Risposta 1</label>
-            <textarea name="risposta1" rows="3" required placeholder="Risposta principale"></textarea>
-
-            <label>Risposta 2 (opzionale)</label>
-            <textarea name="risposta2" rows="3" placeholder="Variante risposta"></textarea>
-
-            <label>Risposta 3 (opzionale)</label>
-            <textarea name="risposta3" rows="3" placeholder="Variante risposta"></textarea>
-
-            <button type="submit" class="admin-btn-primary">Salva FAQ</button>
-          </form>
-        </div>
-
-        <div class="admin-card">
-          <div class="admin-card-title">Elenco FAQ</div>
-          <div class="admin-table-wrap">
-            <table class="admin-table" id="faqTable">
-              <thead>
-                <tr>
-                  <th>ID</th>
-                  <th>Categoria</th>
-                  <th>Domanda</th>
-                  <th></th>
-                </tr>
-              </thead>
-              <tbody>
-                {table_rows if table_rows else '<tr><td colspan="4" class="admin-muted">Nessuna FAQ trovata.</td></tr>'}
-              </tbody>
-            </table>
-          </div>
-          <div class="admin-hint">Clicca “Modifica” per aggiornare una FAQ.</div>
-        </div>
-      </div>
-
-      <!-- Modal edit -->
-      <div class="admin-modal" id="editModal" aria-hidden="true">
-        <div class="admin-modal-card">
-          <div class="admin-modal-head">
-            <strong>Modifica FAQ</strong>
-            <button class="admin-icon" id="closeModal" aria-label="Chiudi">✕</button>
-          </div>
-          <form method="post" id="editForm" action="/admin/faqs/update" class="admin-form admin-form-compact">
-            <input type="hidden" name="id" id="edit_id" />
-            <label>Categoria</label>
-            <input name="categoria" id="edit_categoria" />
-
-            <label>Domanda</label>
-            <textarea name="domanda" id="edit_domanda" rows="3" required></textarea>
-
-            <label>Risposta 1</label>
-            <textarea name="risposta1" id="edit_risposta1" rows="3" required></textarea>
-
-            <label>Risposta 2</label>
-            <textarea name="risposta2" id="edit_risposta2" rows="3"></textarea>
-
-            <label>Risposta 3</label>
-            <textarea name="risposta3" id="edit_risposta3" rows="3"></textarea>
-
-            <button type="submit" class="admin-btn-primary">Salva modifiche</button>
-          </form>
-        </div>
-      </div>
-    """
-    return render_template_string(ADMIN_BASE_HTML, title="Admin • FAQ", content=content)
+@app.get("/admin/faqs/new")
+def admin_faq_new():
+    redir = admin_required()
+    if redir:
+        return redir
+    return render_template(
+        "admin_faq_form.html",
+        title="Admin - Nuova FAQ",
+        heading="Nuova FAQ",
+        faq=None,
+        error=None,
+        form_action=url_for("admin_faq_new_post"),
+        admin_username=session.get("admin_username") or "admin",
+    )
 
 
 @app.post("/admin/faqs/new")
-def admin_faqs_new():
+def admin_faq_new_post():
     redir = admin_required()
     if redir:
         return redir
 
     categoria = (request.form.get("categoria") or "generale").strip() or "generale"
     domanda = (request.form.get("domanda") or "").strip()
-    risposta1 = (request.form.get("risposta1") or "").strip()
+    risposta1 = (request.form.get("risposta1") or "").strip() or None
     risposta2 = (request.form.get("risposta2") or "").strip() or None
     risposta3 = (request.form.get("risposta3") or "").strip() or None
 
-    if not domanda or not risposta1:
-        return redirect(url_for("admin_faqs"))
+    if not domanda:
+        return render_template(
+            "admin_faq_form.html",
+            title="Admin - Nuova FAQ",
+            heading="Nuova FAQ",
+            faq={"categoria": categoria, "domanda": domanda, "risposta1": risposta1 or "", "risposta2": risposta2 or "", "risposta3": risposta3 or ""},
+            error="La domanda è obbligatoria.",
+            form_action=url_for("admin_faq_new_post"),
+            admin_username=session.get("admin_username") or "admin",
+        )
 
     conn = get_connection()
     cur = conn.cursor()
@@ -623,45 +772,64 @@ def admin_faqs_new():
     return redirect(url_for("admin_faqs"))
 
 
-@app.get("/admin/faqs/<int:faq_id>")
-def admin_faq_get(faq_id: int):
+@app.get("/admin/faqs/edit/<int:faq_id>")
+def admin_faq_edit(faq_id: int):
     redir = admin_required()
     if redir:
         return redir
 
     conn = get_connection()
     cur = conn.cursor(dictionary=True)
-    cur.execute("SELECT id, categoria, domanda, risposta1, risposta2, risposta3 FROM faq WHERE id=%s", (faq_id,))
-    row = cur.fetchone()
+    cur.execute("SELECT * FROM faq WHERE id=%s LIMIT 1", (faq_id,))
+    faq = cur.fetchone()
     cur.close()
     conn.close()
 
-    if not row:
-        return jsonify({"ok": False, "error": "FAQ non trovata"}), 404
+    if not faq:
+        return redirect(url_for("admin_faqs"))
 
-    return jsonify({"ok": True, "faq": row})
+    return render_template(
+        "admin_faq_form.html",
+        title=f"Admin - Modifica FAQ {faq_id}",
+        heading=f"Modifica FAQ #{faq_id}",
+        faq=faq,
+        error=None,
+        form_action=url_for("admin_faq_edit_post", faq_id=faq_id),
+        admin_username=session.get("admin_username") or "admin",
+    )
 
 
-@app.post("/admin/faqs/update")
-def admin_faq_update():
+@app.post("/admin/faqs/edit/<int:faq_id>")
+def admin_faq_edit_post(faq_id: int):
     redir = admin_required()
     if redir:
         return redir
 
-    faq_id = int(request.form.get("id") or 0)
     categoria = (request.form.get("categoria") or "generale").strip() or "generale"
     domanda = (request.form.get("domanda") or "").strip()
-    risposta1 = (request.form.get("risposta1") or "").strip()
+    risposta1 = (request.form.get("risposta1") or "").strip() or None
     risposta2 = (request.form.get("risposta2") or "").strip() or None
     risposta3 = (request.form.get("risposta3") or "").strip() or None
 
-    if faq_id <= 0 or not domanda or not risposta1:
-        return redirect(url_for("admin_faqs"))
+    if not domanda:
+        return render_template(
+            "admin_faq_form.html",
+            title=f"Admin - Modifica FAQ {faq_id}",
+            heading=f"Modifica FAQ #{faq_id}",
+            faq={"categoria": categoria, "domanda": domanda, "risposta1": risposta1 or "", "risposta2": risposta2 or "", "risposta3": risposta3 or ""},
+            error="La domanda è obbligatoria.",
+            form_action=url_for("admin_faq_edit_post", faq_id=faq_id),
+            admin_username=session.get("admin_username") or "admin",
+        )
 
     conn = get_connection()
     cur = conn.cursor()
     cur.execute(
-        "UPDATE faq SET categoria=%s, domanda=%s, risposta1=%s, risposta2=%s, risposta3=%s WHERE id=%s",
+        """
+        UPDATE faq
+        SET categoria=%s, domanda=%s, risposta1=%s, risposta2=%s, risposta3=%s
+        WHERE id=%s
+        """,
         (categoria, domanda, risposta1, risposta2, risposta3, faq_id),
     )
     conn.commit()
@@ -671,11 +839,21 @@ def admin_faq_update():
     return redirect(url_for("admin_faqs"))
 
 
-# Static files
-@app.get("/static/<path:filename>")
-def static_files(filename: str):
-    return send_from_directory(STATIC_DIR, filename)
+@app.post("/admin/faqs/delete/<int:faq_id>")
+def admin_faq_delete(faq_id: int):
+    redir = admin_required()
+    if redir:
+        return redir
+
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute("DELETE FROM faq WHERE id=%s", (faq_id,))
+    conn.commit()
+    cur.close()
+    conn.close()
+
+    return redirect(url_for("admin_faqs"))
 
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=int(os.getenv("PORT", "5000")), debug=True)
+    app.run(host="127.0.0.1", port=5000, debug=True, use_reloader=False)

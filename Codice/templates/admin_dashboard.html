@@ -1,0 +1,71 @@
+{% extends "admin.html" %}
+{% set active = 'report' %}
+
+{% block content %}
+  <h1>Report</h1>
+  <p class="admin-muted">Ciao {{ admin_username }} — riepilogo dell'attività recente.</p>
+
+  <section class="admin-grid" aria-label="KPI">
+    <div class="admin-card">
+      <div class="admin-kpi">
+        <div>
+          <div class="admin-kpi-label">FAQ totali</div>
+          <div class="admin-kpi-value">{{ faq_count }}</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="admin-card">
+      <div class="admin-kpi">
+        <div>
+          <div class="admin-kpi-label">Messaggi loggati</div>
+          <div class="admin-kpi-value">{{ log_count }}</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="admin-card">
+      <div class="admin-kpi">
+        <div>
+          <div class="admin-kpi-label">Risolti (match FAQ)</div>
+          <div class="admin-kpi-value">{{ resolved_ok }}</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="admin-card">
+      <div class="admin-kpi">
+        <div>
+          <div class="admin-kpi-label">Non risolti</div>
+          <div class="admin-kpi-value">{{ resolved_no }}</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="admin-card admin-card-wide">
+      <div class="admin-card-title">Andamento ultimi 14 giorni</div>
+      <div class="admin-table-wrap">
+        <table class="admin-table">
+          <thead>
+            <tr>
+              <th>Data</th>
+              <th>Messaggi</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for r in daily %}
+              <tr>
+                <td class="mono">{{ r.d }}</td>
+                <td>{{ r.c }}</td>
+              </tr>
+            {% endfor %}
+            {% if daily|length == 0 %}
+              <tr><td colspan="2" class="admin-muted">Nessun dato disponibile.</td></tr>
+            {% endif %}
+          </tbody>
+        </table>
+      </div>
+      <div class="admin-hint">Suggerimento: per aumentare i match, arricchisci le FAQ con varianti nelle risposte.</div>
+    </div>
+  </section>
+{% endblock %}

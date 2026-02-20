@@ -3,7 +3,7 @@
 -- https://www.phpmyadmin.net/
 --
 -- Host: 127.0.0.1
--- Creato il: Gen 30, 2026 alle 09:20
+-- Creato il: Feb 20, 2026 alle 10:47
 -- Versione del server: 10.4.32-MariaDB
 -- Versione PHP: 8.2.12
 
@@ -20,6 +20,29 @@ SET time_zone = "+00:00";
 --
 -- Database: `chatbot`
 --
+
+-- --------------------------------------------------------
+
+--
+-- Struttura della tabella `conversations`
+--
+
+CREATE TABLE `conversations` (
+  `id` int(11) NOT NULL,
+  `user_id` int(11) NOT NULL,
+  `title` varchar(120) NOT NULL DEFAULT 'Nuova chat',
+  `created_at` timestamp NOT NULL DEFAULT current_timestamp(),
+  `updated_at` timestamp NOT NULL DEFAULT current_timestamp() ON UPDATE current_timestamp()
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+--
+-- Dump dei dati per la tabella `conversations`
+--
+
+INSERT INTO `conversations` (`id`, `user_id`, `title`, `created_at`, `updated_at`) VALUES
+(9, 4, 'ciao', '2026-02-20 08:30:00', '2026-02-20 08:30:00'),
+(10, 4, 'chi seiii', '2026-02-20 08:30:10', '2026-02-20 08:30:10'),
+(11, 4, 'ciao', '2026-02-20 09:41:27', '2026-02-20 09:42:02');
 
 -- --------------------------------------------------------
 
@@ -62,11 +85,7 @@ INSERT INTO `faq` (`id`, `categoria`, `domanda`, `risposta1`, `risposta2`, `risp
 (19, 'certificati SSL', 'Come generare una CSR?\r\n', 'La procedura varia in base al sistema operativo o al pannello di controllo utilizzato. Abbiamo guide dettagliate per le principali piattaforme, tra cui:\r\n\r\ncPanel/WHM\r\nMicrosoft Exchange\r\nIIS (Internet Information Services)\r\nJava Keytool\r\nOpenSSL (Linux/Unix)\r\nConsulta la guida relativa al tuo ambiente per generare correttamente il file CSR.', 'La procedura cambia a seconda del sistema operativo o del pannello di controllo in uso. Disponiamo di guide dettagliate per le principali piattaforme, tra cui:\r\n\r\ncPanel/WHM\r\n\r\nMicrosoft Exchange\r\n\r\nIIS (Internet Information Services)\r\n\r\nJava Keytool\r\n\r\nOpenSSL (Linux/Unix)\r\n\r\nSegui la guida specifica per il tuo ambiente per generare correttamente il file CSR.', 'La modalità di generazione del CSR dipende dal sistema operativo o dal pannello di controllo adottato. Per le piattaforme più comuni sono disponibili guide complete, tra cui:\r\n\r\ncPanel/WHM\r\n\r\nMicrosoft Exchange\r\n\r\nIIS (Internet Information Services)\r\n\r\nJava Keytool\r\n\r\nOpenSSL (Linux/Unix)\r\n\r\nConsulta la guida corrispondente al tuo ambiente per creare correttamente il CSR.', '2026-01-23 10:35:28'),
 (20, 'certificati SSL', 'Come generare una richiesta CSR per Apache2?', 'Se stai utilizzando un server Apache2 senza pannello di controllo grafico (es. cPanel), puoi generare una richiesta di firma del certificato (CSR) direttamente da linea di comando tramite SSH.\r\n\r\n \r\n\r\n1. Accedi al server via SSH\r\nUtilizza un client SSH (come PuTTY o il terminale) per connetterti al server dove verrà installato il certificato SSL.\r\n\r\n \r\n\r\n2. Comando per generare CSR e chiave privata\r\nEsegui il seguente comando:\r\n\r\nopenssl req -new -newkey rsa:2048 -nodes -keyout domain.key -out domain.csr\r\nSostituisci domain con il nome del tuo dominio (es. esempio.com). Il comando genererà due file:\r\n\r\ndomain.key → chiave privata\r\ndomain.csr → richiesta CSR\r\n \r\n\r\n3. Inserisci le informazioni richieste\r\nDopo aver eseguito il comando, ti verranno richiesti alcuni dati. Compila come segue:\r\n\r\nCommon Name (CN): il nome di dominio completo (es. www.esempio.com)\r\nWildcard: per certificati jolly, inserisci *.esempio.com\r\nOrganization (O): nome legale dell\'azienda\r\nOrganizational Unit (OU): reparto o nome commerciale (facoltativo)\r\nCity/Locality (L): città (senza abbreviazioni)\r\nState/Province (S): provincia o regione (senza abbreviazioni)\r\nCountry (C): codice ISO a due lettere (es. IT per Italia)\r\n \r\n\r\n4. Copia e incolla la CSR nel modulo di richiesta SSL\r\nApri il file domain.csr con un editor di testo (es. nano, vim o scaricalo via FTP) e copia l’intero contenuto, inclusi intestazione e piè di pagina:\r\n\r\n-----BEGIN CERTIFICATE REQUEST-----\r\n[contenuto codificato]\r\n-----END CERTIFICATE REQUEST-----\r\nIncolla questo contenuto nel modulo di richiesta SSL nel tuo account Utixo o presso il fornitore scelto.', 'Se utilizzi un server Apache2 senza pannello grafico (ad esempio cPanel), puoi generare una CSR direttamente da linea di comando tramite SSH.\r\n\r\n1. Accedi al server via SSH\r\nConnettiti al server usando un client SSH (come PuTTY o il terminale) sul server dove installerai il certificato SSL.\r\n\r\n2. Genera CSR e chiave privata\r\nEsegui il comando:\r\n\r\nopenssl req -new -newkey rsa:2048 -nodes -keyout domain.key -out domain.csr\r\n\r\n\r\nSostituisci domain con il tuo dominio (es. esempio.com). Questo creerà due file:\r\n\r\ndomain.key → chiave privata\r\n\r\ndomain.csr → richiesta CSR\r\n\r\n3. Inserisci le informazioni richieste\r\nQuando il comando ti chiederà dei dati, compila come segue:\r\n\r\nCommon Name (CN): nome di dominio completo (es. www.esempio.com\r\n)\r\n\r\nWildcard: per certificati jolly, inserisci *.esempio.com\r\n\r\nOrganization (O): nome legale dell’azienda\r\n\r\nOrganizational Unit (OU): reparto o nome commerciale (facoltativo)\r\n\r\nCity/Locality (L): città (senza abbreviazioni)\r\n\r\nState/Province (S): provincia o regione (senza abbreviazioni)\r\n\r\nCountry (C): codice ISO a due lettere (es. IT)\r\n\r\n4. Copia la CSR nel modulo di richiesta SSL\r\nApri il file domain.csr con un editor di testo (nano, vim o tramite FTP) e copia tutto il contenuto, inclusi intestazione e piè di pagina:\r\n\r\n-----BEGIN CERTIFICATE REQUEST-----\r\n[contenuto codificato]\r\n-----END CERTIFICATE REQUEST-----\r\n\r\n\r\nIncolla poi questo contenuto nel modulo di richiesta SSL del tuo account Utixo o presso il provider scelto.', 'Per server Apache2 senza pannello di controllo grafico, la CSR può essere generata via SSH direttamente da terminale.\r\n\r\n1. Connessione al server\r\nUsa un client SSH (ad esempio PuTTY o terminale) per accedere al server dove installerai il certificato SSL.\r\n\r\n2. Comando per generare CSR e chiave privata\r\n\r\nopenssl req -new -newkey rsa:2048 -nodes -keyout domain.key -out domain.csr\r\n\r\n\r\nSostituisci domain con il tuo dominio reale. Il comando produrrà:\r\n\r\ndomain.key → chiave privata\r\n\r\ndomain.csr → richiesta di certificato\r\n\r\n3. Compila i dati richiesti\r\nInserisci le informazioni richieste dal comando:\r\n\r\nCN (Common Name): dominio completo (es. www.esempio.com\r\n)\r\n\r\nWildcard: *.esempio.com per certificati jolly\r\n\r\nO (Organization): nome legale dell’azienda\r\n\r\nOU (Organizational Unit): reparto o nome commerciale (facoltativo)\r\n\r\nL (City/Locality): città (senza abbreviazioni)\r\n\r\nS (State/Province): provincia o regione (senza abbreviazioni)\r\n\r\nC (Country): codice ISO a due lettere (es. IT)\r\n\r\n4. Inserisci la CSR nel modulo SSL\r\nApri domain.csr con un editor di testo o scaricalo via FTP e copia l’intero contenuto, intestazione e piè di pagina inclusi:\r\n\r\n-----BEGIN CERTIFICATE REQUEST-----\r\n[contenuto codificato]\r\n-----END CERTIFICATE REQUEST-----\r\n\r\n\r\nIncolla il contenuto nel modulo di richiesta SSL del tuo provider o del tuo account Utixo.', '2026-01-23 10:37:24'),
 (21, 'certificati SSL', 'Come posso installareun certificato SSL su GlassFish?', 'Apri la console dei comandi (cmd) e accedi alla cartella config del dominio GlassFish. Esempio:\r\n\r\ncd glassfish4\\glassfish\\domains\\domain1\\config\r\n \r\n\r\n1. Creazione della chiave (solo per prima installazione)\r\nSe non è già presente una chiave nel keystore, esegui il seguente comando per crearla:\r\n\r\nkeytool -genkey -alias nomeAlias -keyalg RSA -keysize 2048 -keystore keystore.jks -noprompt -v -dname \"CN=dominio,O=società,OU=proprietario,L=città,S=nazione,C=siglaNazione\" -storepass changeit\r\nSostituisci nomeAlias con un identificativo del dominio, ad esempio senza punti (esempiocom).\r\n\r\n \r\n\r\n2. Generazione della CSR\r\nPer richiedere un certificato, genera la CSR con il comando:\r\n\r\nkeytool -certreq -alias nomeAlias -file nomeAlias.csr -keystore keystore.jks -storepass changeit\r\nCarica la CSR nel control panel Utixo e scegli un metodo di validazione (email o DNS).\r\n\r\n \r\n\r\n3a. Importazione certificati (formato CRT separato)\r\nSe hai ricevuto i certificati in formato singolo (root, intermediate, dominio):\r\n\r\nPulisci i certificati precedenti\r\nkeytool -delete -alias root -keystore keystore.jks -storepass changeit\r\nkeytool -delete -alias intermed -keystore keystore.jks -storepass changeit\r\nkeytool -delete -alias root -keystore cacerts.jks -storepass changeit\r\nkeytool -delete -alias intermed -keystore cacerts.jks -storepass changeit\r\nImporta root, intermedi e certificato dominio\r\nkeytool -import -trustcacerts -alias root -file AAACertificateServices.crt -keystore keystore.jks -storepass changeit\r\nkeytool -import -trustcacerts -alias intermed -file USERTrustRSAAAACA.crt -keystore keystore.jks -storepass changeit\r\nkeytool -import -trustcacerts -alias SectigoRSADomainValidationSecureServerCA -file SectigoRSADomainValidationSecureServerCA.crt -keystore keystore.jks -storepass changeit\r\nkeytool -import -trustcacerts -alias nomeAlias -file nomeAlias.crt -keystore keystore.jks -storepass changeit\r\n\r\nkeytool -import -trustcacerts -alias root -file AAACertificateServices.crt -keystore cacerts.jks -storepass changeit\r\nkeytool -import -trustcacerts -alias intermed -file USERTrustRSAAAACA.crt -keystore cacerts.jks -storepass changeit\r\nkeytool -import -trustcacerts -alias SectigoRSADomainValidationSecureServerCA -file SectigoRSADomainValidationSecureServerCA.crt -keystore cacerts.jks -storepass changeit\r\n \r\n\r\n3b. Importazione certificati (CA Bundle o P7B)\r\nSe hai ricevuto un file .ca-bundle o .p7b, procedi così:\r\n\r\nPulisci i certificati precedenti\r\nkeytool -delete -alias cabundle -keystore keystore.jks -storepass changeit\r\nkeytool -delete -alias cabundle -keystore cacerts.jks -storepass changeit\r\nImporta bundle e certificato dominio\r\nkeytool -import -trustcacerts -alias cabundle -file nomeAlias.ca-bundle -keystore keystore.jks -storepass changeit\r\nkeytool -import -trustcacerts -alias nomeAlias -file nomeAlias.crt -keystore keystore.jks -storepass changeit\r\noppure:\r\n\r\nkeytool -import -trustcacerts -alias nomeAlias -file nomeAlias.p7b -keystore keystore.jks -storepass changeit\r\nkeytool -import -trustcacerts -alias cabundle -file nomeAlias.ca-bundle -keystore cacerts.jks -storepass changeit\r\n \r\n\r\n4. Verifica dell\'importazione\r\nkeytool -list -alias nomeAlias -keystore keystore.jks -storepass changeit\r\n \r\n\r\n5. Associare il certificato in GlassFish\r\nAccedi alla console GlassFish e vai su:\r\n\r\nConfigurazioni → server-config → Servizio HTTP → Listener HTTP → http-listener-2 → SSL\r\n\r\nInserisci nomeAlias nella casella Alias certificato per attivarlo.\r\n\r\n \r\n\r\n6. Riavviare GlassFish\r\nRiavvia il server GlassFish per applicare le modifiche e rendere attivo il nuovo certificato SSL.', 'Apri il prompt dei comandi (cmd) e posizionati nella cartella config del dominio GlassFish, ad esempio:\r\n\r\ncd glassfish4\\glassfish\\domains\\domain1\\config\r\n\r\n\r\n1. Creazione della chiave (solo al primo setup)\r\nSe non è presente una chiave nel keystore, esegui:\r\n\r\nkeytool -genkey -alias nomeAlias -keyalg RSA -keysize 2048 -keystore keystore.jks -noprompt -v -dname \"CN=dominio,O=società,OU=proprietario,L=città,S=nazione,C=siglaNazione\" -storepass changeit\r\n\r\n\r\nSostituisci nomeAlias con un identificativo del dominio, senza punti (es. esempiocom).\r\n\r\n2. Generazione della CSR\r\nPer richiedere il certificato, crea la CSR:\r\n\r\nkeytool -certreq -alias nomeAlias -file nomeAlias.csr -keystore keystore.jks -storepass changeit\r\n\r\n\r\nCarica il file .csr nel control panel Utixo e scegli il metodo di validazione (email o DNS).\r\n\r\n3a. Importazione certificati separati (CRT)\r\nSe hai ricevuto certificati separati (root, intermedi, dominio):\r\n\r\nElimina certificati precedenti\r\n\r\nkeytool -delete -alias root -keystore keystore.jks -storepass changeit\r\nkeytool -delete -alias intermed -keystore keystore.jks -storepass changeit\r\nkeytool -delete -alias root -keystore cacerts.jks -storepass changeit\r\nkeytool -delete -alias intermed -keystore cacerts.jks -storepass changeit\r\n\r\n\r\nImporta root, intermedi e certificato dominio\r\n\r\nkeytool -import -trustcacerts -alias root -file AAACertificateServices.crt -keystore keystore.jks -storepass changeit\r\nkeytool -import -trustcacerts -alias intermed -file USERTrustRSAAAACA.crt -keystore keystore.jks -storepass changeit\r\nkeytool -import -trustcacerts -alias SectigoRSADomainValidationSecureServerCA -file SectigoRSADomainValidationSecureServerCA.crt -keystore keystore.jks -storepass changeit\r\nkeytool -import -trustcacerts -alias nomeAlias -file nomeAlias.crt -keystore keystore.jks -storepass changeit\r\nkeytool -import -trustcacerts -alias root -file AAACertificateServices.crt -keystore cacerts.jks -storepass changeit\r\nkeytool -import -trustcacerts -alias intermed -file USERTrustRSAAAACA.crt -keystore cacerts.jks -storepass changeit\r\nkeytool -import -trustcacerts -alias SectigoRSADomainValidationSecureServerCA -file SectigoRSADomainValidationSecureServerCA.crt -keystore cacerts.jks -storepass changeit\r\n\r\n\r\n3b. Importazione certificati in bundle (.ca-bundle o .p7b)\r\n\r\nElimina bundle precedenti\r\n\r\nkeytool -delete -alias cabundle -keystore keystore.jks -storepass changeit\r\nkeytool -delete -alias cabundle -keystore cacerts.jks -storepass changeit\r\n\r\n\r\nImporta bundle e certificato dominio\r\n\r\nkeytool -import -trustcacerts -alias cabundle -file nomeAlias.ca-bundle -keystore keystore.jks -storepass changeit\r\nkeytool -import -trustcacerts -alias nomeAlias -file nomeAlias.crt -keystore keystore.jks -storepass changeit\r\n\r\n\r\noppure:\r\n\r\nkeytool -import -trustcacerts -alias nomeAlias -file nomeAlias.p7b -keystore keystore.jks -storepass changeit\r\nkeytool -import -trustcacerts -alias cabundle -file nomeAlias.ca-bundle -keystore cacerts.jks -storepass changeit\r\n\r\n\r\n4. Verifica dell’importazione\r\n\r\nkeytool -list -alias nomeAlias -keystore keystore.jks -storepass changeit\r\n\r\n\r\n5. Associare il certificato in GlassFish\r\nAccedi alla console GlassFish:\r\n\r\nConfigurazioni → server-config → Servizio HTTP → Listener HTTP → http-listener-2 → SSL\r\n\r\n\r\nInserisci nomeAlias nella casella “Alias certificato” per attivarlo.\r\n\r\n6. Riavvia GlassFish\r\nRiavvia il server per applicare le modifiche e rendere operativo il nuovo certificato SSL.', 'Apri cmd e vai nella cartella config\r\n\r\ncd glassfish4\\glassfish\\domains\\domain1\\config\r\n\r\n\r\nCrea chiave (solo al primo setup)\r\n\r\nkeytool -genkey -alias nomeAlias -keyalg RSA -keysize 2048 -keystore keystore.jks -noprompt -v -dname \"CN=dominio,O=società,OU=proprietario,L=città,S=nazione,C=siglaNazione\" -storepass changeit\r\n\r\n\r\nGenera CSR\r\n\r\nkeytool -certreq -alias nomeAlias -file nomeAlias.csr -keystore keystore.jks -storepass changeit\r\n\r\n\r\nCarica il .csr su Utixo e seleziona il metodo di validazione.\r\n\r\nImporta certificati\r\n\r\nSe CRT separati: elimina vecchi certificati e importa root, intermedi e dominio.\r\n\r\nSe CA bundle (.ca-bundle o .p7b): elimina vecchi bundle e importa nuovo bundle e certificato dominio.\r\n\r\nVerifica importazione\r\n\r\nkeytool -list -alias nomeAlias -keystore keystore.jks -storepass changeit\r\n\r\n\r\nAssociare certificato in GlassFish\r\nConsole → Configurazioni → server-config → Servizio HTTP → Listener HTTP → http-listener-2 → SSL → inserisci alias.\r\n\r\nRiavvia GlassFish\r\nPer rendere attivo il certificato SSL.', '2026-01-23 10:40:23'),
-(22, 'certificati SSL', 'Che cos\'è il controllo CAA?', 'Il controllo CAA (Certificate Authority Authorization) è un meccanismo di sicurezza basato su DNS che consente ai proprietari di un dominio di specificare quali Autorità di Certificazione (CA) sono autorizzate a emettere certificati SSL/TLS per quel dominio.\r\n\r\nConfigurando un record CAA all’interno del DNS del proprio dominio, è possibile limitare l’emissione dei certificati solo ad alcune CA specifiche. Questo riduce il rischio che una CA non autorizzata rilasci un certificato fraudolento o non conforme.\r\n\r\nAd esempio, se si desidera autorizzare solo sectigo.com come CA, si può configurare un record come il seguente:\r\n\r\nexample.com.  CAA  0 issue \"sectigo.com\"\r\n\r\nUn CAA:\r\nAumenta la sicurezza del dominio contro emissioni non autorizzate\r\nÈ supportato da tutte le CA principali e considerato uno standard di buona pratica\r\nÈ raccomandato per i domini pubblici che richiedono certificati SSL/TLS\r\n\r\nQuando una CA riceve una richiesta per emettere un certificato SSL/TLS, esegue una query DNS sul record CAA del dominio. Se non trova il proprio nome all’interno del record, rifiuterà la richiesta di certificato.', 'Il controllo CAA (Certificate Authority Authorization) è un meccanismo di sicurezza basato su DNS che permette ai proprietari di un dominio di indicare quali Autorità di Certificazione (CA) sono autorizzate a emettere certificati SSL/TLS per quel dominio.\r\n\r\nConfigurando un record CAA nel DNS del proprio dominio, si limita l’emissione dei certificati solo alle CA specificate, riducendo il rischio di certificati emessi da CA non autorizzate o fraudolente.\r\n\r\nAd esempio, per autorizzare solo sectigo.com come CA:\r\n\r\nexample.com.  CAA  0 issue \"sectigo.com\"\r\n\r\n\r\nVantaggi del CAA:\r\n\r\nAumenta la sicurezza del dominio contro emissioni non autorizzate\r\n\r\nSupportato da tutte le principali CA ed è considerato una best practice\r\n\r\nRaccomandato per domini pubblici che richiedono certificati SSL/TLS\r\n\r\nQuando una CA riceve una richiesta di certificato, verifica il record CAA del dominio tramite DNS. Se il proprio nome non è presente, la richiesta viene rifiutata.', 'Il CAA (Certificate Authority Authorization) è un record DNS che consente ai proprietari di dominio di specificare quali CA possono emettere certificati SSL/TLS per il loro dominio.\r\n\r\nConfigurando correttamente il CAA, si impedisce a CA non autorizzate di rilasciare certificati, aumentando la sicurezza.\r\n\r\nEsempio per autorizzare solo sectigo.com:\r\n\r\nexample.com.  CAA  0 issue \"sectigo.com\"\r\n\r\n\r\nPunti chiave:\r\n\r\nProtegge il dominio da emissioni di certificati non autorizzate\r\n\r\nSupportato da tutte le principali CA\r\n\r\nRaccomandato per domini pubblici che richiedono SSL/TLS\r\n\r\nQuando una CA riceve una richiesta di certificato, controlla il record CAA tramite DNS e rifiuta la richiesta se il suo nome non è autorizzato.', '2026-01-23 10:43:19'),
-(23, 'cloud backup', 'Come accedo alla console Acronis?', 'Per accedere direttamente alla console di gestione Acronis, visitare il sito:\r\n\r\nhttps://cloud.acronis.com ed effettuare l\'accesso inserendo le proprie credenziali (codice utente e password).\r\n\r\nIn alternativa, è possibile accedere dal proprio pannello di controllo cercando il prodotto Cloud Backup:\r\n\r\nCliccare su “Attivo” per accedere alla gestione del servizio Acronis Cloud Backup.\r\n\r\nUtilizzando il pulsante “Vai alla console”, si aprirà direttamente la console Acronis, senza necessità di inserire user e password.\r\n\r\nUna volta all\'interno, cliccando sul pulsante “Backup” sarà possibile visualizzare tutti i dispositivi attualmente gestiti.', 'Per accedere alla console di gestione Acronis, visita il sito:\r\nhttps://cloud.acronis.com\r\n e inserisci le tue credenziali (codice utente e password).\r\n\r\nIn alternativa, puoi accedere tramite il tuo pannello di controllo:\r\n\r\nCerca il prodotto Cloud Backup.\r\n\r\nClicca su “Attivo” per gestire il servizio Acronis Cloud Backup.\r\n\r\nUtilizza il pulsante “Vai alla console”: questo aprirà direttamente la console Acronis senza richiedere nuovamente user e password.\r\n\r\nAll’interno della console, cliccando su “Backup” potrai visualizzare tutti i dispositivi attualmente gestiti dal servizio.', 'Per entrare nella console Acronis:\r\n\r\nVai su https://cloud.acronis.com\r\n e accedi con le tue credenziali.\r\n\r\nOppure dal pannello di controllo, cerca Cloud Backup, clicca su “Attivo” e poi su “Vai alla console” per l’accesso diretto senza reinserire user e password.\r\n\r\nAll’interno della console, cliccando su “Backup” potrai vedere tutti i dispositivi gestiti.', '2026-01-30 08:07:30'),
-(24, 'CloudFlare', 'Come attivare Under Attack?', 'Accedete al nostro sito shop.serverweb.net con le vostre credenziali.\r\nUtilizzate la barra di ricerca in basso. Digitate Cloud e premete Invio per visualizzare i servizi correlati.\r\nTra i risultati, scegliete il servizio Cloudflare Security Services. L\'opzione “I\'m Under Attack” è disponibile solo all’interno di questo prodotto.\r\nScorrete la pagina verso il basso fino a trovare il pulsante Manage Cloudflare, quindi cliccatelo per accedere alla gestione del servizio.\r\nNel menu centrale dell’interfaccia, cliccate sulla voce Firewall.\r\nIndividuate il campo Security Level e selezionate l’opzione I\'m Under Attack.\r\nUna volta impostato il livello desiderato, cliccate su Save Changes per applicare la modifica.\r\n\r\n', '1.Accedete al sito shop.serverweb.net\r\n inserendo le vostre credenziali.\r\n\r\n2.Utilizzate la barra di ricerca in basso: digitate Cloud e premete Invio per visualizzare i servizi correlati.\r\n\r\n3.Tra i risultati, selezionate Cloudflare Security Services. L’opzione “I’m Under Attack” è disponibile solo all’interno di questo prodotto.\r\n\r\n4.Scorrete la pagina fino al pulsante Manage Cloudflare e cliccatelo per accedere alla gestione del servizio.\r\n\r\n5.Nel menu centrale dell’interfaccia, cliccate su Firewall.\r\n\r\n6.Individuate il campo Security Level e selezionate I’m Under Attack.\r\n\r\n7.Infine, cliccate su Save Changes per applicare la modifica.', 'Accedete a shop.serverweb.net\r\n con le vostre credenziali.\r\n\r\nCercate Cloud nella barra di ricerca e premete Invio.\r\n\r\nSelezionate Cloudflare Security Services. L’opzione “I’m Under Attack” è disponibile solo qui.\r\n\r\nCliccate su Manage Cloudflare per entrare nella gestione del servizio.\r\n\r\nNel menu centrale, aprite Firewall, selezionate I’m Under Attack in Security Level e cliccate Save Changes.', '2026-01-30 08:10:39'),
-(25, 'CloudFlare', 'Cosa è SSL offloading di Cloudflare?', 'Lo SSL offloading tramite Cloudflare è una soluzione efficace per migliorare le prestazioni e la sicurezza del sito web, riducendo al contempo il carico sul server di origine.\r\n\r\nIn pratica, consente a Cloudflare di gestire la terminazione della connessione SSL, lasciando al server web la gestione della sola comunicazione interna. Il traffico tra l\'utente e Cloudflare è cifrato, mentre quello tra Cloudflare e il server può essere in chiaro o crittografato a seconda della configurazione.\r\n\r\nDelegando a Cloudflare la gestione del certificato SSL, il server web viene alleggerito da operazioni complesse di cifratura e decifratura, migliorando l\'efficienza complessiva.', 'Lo SSL offloading tramite Cloudflare è una soluzione che aumenta sia le prestazioni sia la sicurezza del sito web, riducendo il carico sul server di origine.\r\n\r\nIn pratica, Cloudflare gestisce la terminazione della connessione SSL, mentre il server web si occupa solo della comunicazione interna. Il traffico tra l’utente e Cloudflare rimane cifrato, mentre quello tra Cloudflare e il server può essere in chiaro o crittografato, a seconda delle impostazioni scelte.\r\n\r\nAffidando a Cloudflare la gestione del certificato SSL, il server web viene sollevato dalle operazioni intensive di cifratura e decifratura, aumentando l’efficienza complessiva del sistema.', 'Lo SSL offloading con Cloudflare migliora sicurezza e prestazioni del sito, alleggerendo il server web.\r\n\r\nCloudflare gestisce la terminazione SSL, cifrando il traffico tra utente e Cloudflare. La comunicazione tra Cloudflare e il server può essere cifrata o meno, a seconda della configurazione.\r\n\r\nQuesto approccio libera il server dalle operazioni di crittografia, ottimizzando le risorse e le prestazioni complessive.', '2026-01-30 08:16:25'),
-(26, 'CloudFlare', 'Come Configurare l\'SSL Offloading su Cloudflare?', '1. Attivare Cloudflare da UCMP Utixo\r\n\r\n2. Abilitare il proxy sui record DNS\r\n\r\n3. Selezionare il tipo di SSL in Crypto\r\n(Se il server non dispone di un certificato valido, selezionare \"Full\")\r\n\r\n4. Verificare il certificato generato da Cloudflare\r\n\r\n', 'Attivare Cloudflare dal pannello UCMP Utixo.\r\n\r\nAbilitare il proxy sui record DNS desiderati.\r\n\r\nSelezionare il tipo di SSL nella sezione Crypto.\r\n\r\nSe il server non possiede un certificato valido, scegliere Full.\r\n\r\nVerificare il certificato SSL generato automaticamente da Cloudflare.', 'Attivate Cloudflare tramite UCMP Utixo.\r\n\r\nAbilitate il proxy sui record DNS.\r\n\r\nNel pannello Crypto, scegliete il tipo di SSL (Full se il server non ha un certificato valido).\r\n\r\nControllate il certificato SSL generato da Cloudflare.', '2026-01-30 08:18:43');
+(22, 'certificati SSL', 'Che cos\'è il controllo CAA?', 'Il controllo CAA (Certificate Authority Authorization) è un meccanismo di sicurezza basato su DNS che consente ai proprietari di un dominio di specificare quali Autorità di Certificazione (CA) sono autorizzate a emettere certificati SSL/TLS per quel dominio.\r\n\r\nConfigurando un record CAA all’interno del DNS del proprio dominio, è possibile limitare l’emissione dei certificati solo ad alcune CA specifiche. Questo riduce il rischio che una CA non autorizzata rilasci un certificato fraudolento o non conforme.\r\n\r\nAd esempio, se si desidera autorizzare solo sectigo.com come CA, si può configurare un record come il seguente:\r\n\r\nexample.com.  CAA  0 issue \"sectigo.com\"\r\n\r\nUn CAA:\r\nAumenta la sicurezza del dominio contro emissioni non autorizzate\r\nÈ supportato da tutte le CA principali e considerato uno standard di buona pratica\r\nÈ raccomandato per i domini pubblici che richiedono certificati SSL/TLS\r\n\r\nQuando una CA riceve una richiesta per emettere un certificato SSL/TLS, esegue una query DNS sul record CAA del dominio. Se non trova il proprio nome all’interno del record, rifiuterà la richiesta di certificato.', 'Il controllo CAA (Certificate Authority Authorization) è un meccanismo di sicurezza basato su DNS che permette ai proprietari di un dominio di indicare quali Autorità di Certificazione (CA) sono autorizzate a emettere certificati SSL/TLS per quel dominio.\r\n\r\nConfigurando un record CAA nel DNS del proprio dominio, si limita l’emissione dei certificati solo alle CA specificate, riducendo il rischio di certificati emessi da CA non autorizzate o fraudolente.\r\n\r\nAd esempio, per autorizzare solo sectigo.com come CA:\r\n\r\nexample.com.  CAA  0 issue \"sectigo.com\"\r\n\r\n\r\nVantaggi del CAA:\r\n\r\nAumenta la sicurezza del dominio contro emissioni non autorizzate\r\n\r\nSupportato da tutte le principali CA ed è considerato una best practice\r\n\r\nRaccomandato per domini pubblici che richiedono certificati SSL/TLS\r\n\r\nQuando una CA riceve una richiesta di certificato, verifica il record CAA del dominio tramite DNS. Se il proprio nome non è presente, la richiesta viene rifiutata.', 'Il CAA (Certificate Authority Authorization) è un record DNS che consente ai proprietari di dominio di specificare quali CA possono emettere certificati SSL/TLS per il loro dominio.\r\n\r\nConfigurando correttamente il CAA, si impedisce a CA non autorizzate di rilasciare certificati, aumentando la sicurezza.\r\n\r\nEsempio per autorizzare solo sectigo.com:\r\n\r\nexample.com.  CAA  0 issue \"sectigo.com\"\r\n\r\n\r\nPunti chiave:\r\n\r\nProtegge il dominio da emissioni di certificati non autorizzate\r\n\r\nSupportato da tutte le principali CA\r\n\r\nRaccomandato per domini pubblici che richiedono SSL/TLS\r\n\r\nQuando una CA riceve una richiesta di certificato, controlla il record CAA tramite DNS e rifiuta la richiesta se il suo nome non è autorizzato.', '2026-01-23 10:43:19');
 
 -- --------------------------------------------------------
 
@@ -77,8 +96,12 @@ INSERT INTO `faq` (`id`, `categoria`, `domanda`, `risposta1`, `risposta2`, `risp
 CREATE TABLE `logs` (
   `id` int(11) NOT NULL,
   `user_id` int(11) DEFAULT NULL,
+  `conversation_id` int(11) DEFAULT NULL,
   `messaggio_utente` text NOT NULL,
   `risposta_bot` text DEFAULT NULL,
+  `similarity` float DEFAULT NULL,
+  `faq_id` int(11) DEFAULT NULL,
+  `resolved` tinyint(1) NOT NULL DEFAULT 0,
   `data_ora` timestamp NOT NULL DEFAULT current_timestamp()
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
@@ -86,21 +109,18 @@ CREATE TABLE `logs` (
 -- Dump dei dati per la tabella `logs`
 --
 
-INSERT INTO `logs` (`id`, `user_id`, `messaggio_utente`, `risposta_bot`, `data_ora`) VALUES
-(22, NULL, 'ciao chi sei?', 'Salve! In cosa posso esserti utile?', '2025-12-05 11:46:57'),
-(23, NULL, 'chi sei?', 'Non ho trovato una risposta precisa, puoi riformulare?', '2025-12-05 11:47:03'),
-(24, NULL, 'ciao', 'Ciao! Come posso aiutarti?', '2025-12-15 11:46:21'),
-(26, NULL, 'addio', 'Non ho trovato una risposta precisa, puoi riformulare?', '2025-12-15 11:46:40'),
-(28, NULL, 'come contatto assistenza?', 'L assistenza tecnica risponde tramite ticket: accedi alla tua area clienti e apri una richiesta.', '2025-12-15 11:51:00'),
-(29, NULL, 'ciao', 'Ciao! Come posso aiutarti?', '2026-01-09 11:48:24'),
-(30, NULL, 'chi sei', 'Non ho trovato una risposta precisa, puoi riformulare?', '2026-01-09 11:48:46'),
-(31, NULL, 'ciao', 'Salve! In cosa posso esserti utile?', '2026-01-09 11:49:11'),
-(32, NULL, 'cosa puoi fare?', 'Ti supporto nella risoluzione di problemi tecnici, configurazioni e informazioni sui servizi Utixo.', '2026-01-09 11:49:22'),
-(33, NULL, 'dove trovo le fatture?', 'Le fatture sono disponibili nell area clienti Utixo, sezione Fatture.', '2026-01-09 11:49:38'),
-(34, NULL, 'come attivare under attack?', 'Accedete a shop.serverweb.net\r\n con le vostre credenziali.\r\n\r\nCercate Cloud nella barra di ricerca e premete Invio.\r\n\r\nSelezionate Cloudflare Security Services. L’opzione “I’m Under Attack” è disponibile solo qui.\r\n\r\nCliccate su Manage Cloudflare per entrare nella gestione del servizio.\r\n\r\nNel menu centrale, aprite Firewall, selezionate I’m Under Attack in Security Level e cliccate Save Changes.', '2026-01-30 08:12:18'),
-(35, NULL, 'console acronis?', 'Per entrare nella console Acronis:\r\n\r\nVai su https://cloud.acronis.com\r\n e accedi con le tue credenziali.\r\n\r\nOppure dal pannello di controllo, cerca Cloud Backup, clicca su “Attivo” e poi su “Vai alla console” per l’accesso diretto senza reinserire user e password.\r\n\r\nAll’interno della console, cliccando su “Backup” potrai vedere tutti i dispositivi gestiti.', '2026-01-30 08:14:15'),
-(36, NULL, 'cPanel?', 'Con cPanel è possibile abilitare automaticamente certificati SSL gratuiti tramite Let’s Encrypt o AutoSSL. In numerosi casi, l’uso di questi certificati non comporta alcuna spesa extra.', '2026-01-30 08:14:29'),
-(37, NULL, 'SSL offloading?', 'Lo SSL offloading con Cloudflare migliora sicurezza e prestazioni del sito, alleggerendo il server web.\r\n\r\nCloudflare gestisce la terminazione SSL, cifrando il traffico tra utente e Cloudflare. La comunicazione tra Cloudflare e il server può essere cifrata o meno, a seconda della configurazione.\r\n\r\nQuesto approccio libera il server dalle operazioni di crittografia, ottimizzando le risorse e le prestazioni complessive.', '2026-01-30 08:18:56');
+INSERT INTO `logs` (`id`, `user_id`, `conversation_id`, `messaggio_utente`, `risposta_bot`, `similarity`, `faq_id`, `resolved`, `data_ora`) VALUES
+(48, NULL, NULL, 'ciao', 'Salve! In cosa posso esserti utile?', 1, 1, 1, '2026-02-20 08:14:07'),
+(49, 4, NULL, 'ciao chatbot', 'Salve! In cosa posso esserti utile?', 0.661562, 1, 1, '2026-02-20 08:16:19'),
+(50, 4, 9, 'ciao', 'Ciao! Hai bisogno di assistenza?', 1, 1, 1, '2026-02-20 08:30:00'),
+(51, 4, 10, 'chi seiii', 'Non ho trovato una risposta precisa.', 0, NULL, 0, '2026-02-20 08:30:10'),
+(52, 4, 11, 'ciao', 'Salve! In cosa posso esserti utile?', 1, 1, 1, '2026-02-20 09:41:27'),
+(53, 4, 11, 'ciao bello', 'Ciao! Come posso aiutarti?', 0.661562, 1, 1, '2026-02-20 09:41:30'),
+(54, 4, 11, 'come va?', 'Non ho trovato una risposta precisa.', 0, NULL, 0, '2026-02-20 09:41:32'),
+(55, 4, 11, 'ciao chi sei?', 'Salve! In cosa posso esserti utile?', 1, 1, 1, '2026-02-20 09:42:02'),
+(56, NULL, NULL, 'ciao', 'Ciao! Hai bisogno di assistenza?', 1, 1, 1, '2026-02-20 09:42:29'),
+(57, NULL, NULL, 'chatbot', 'Non ho trovato una risposta precisa.', 0, NULL, 0, '2026-02-20 09:42:31'),
+(58, NULL, NULL, 'miao miao', 'Non ho trovato una risposta precisa.', 0, NULL, 0, '2026-02-20 09:42:35');
 
 -- --------------------------------------------------------
 
@@ -111,13 +131,29 @@ INSERT INTO `logs` (`id`, `user_id`, `messaggio_utente`, `risposta_bot`, `data_o
 CREATE TABLE `utenti` (
   `id` int(11) NOT NULL,
   `nome` varchar(100) DEFAULT NULL,
+  `password` varchar(255) NOT NULL,
   `email` varchar(150) DEFAULT NULL,
   `data_creazione` timestamp NOT NULL DEFAULT current_timestamp()
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 --
+-- Dump dei dati per la tabella `utenti`
+--
+
+INSERT INTO `utenti` (`id`, `nome`, `password`, `email`, `data_creazione`) VALUES
+(3, 'admin', 'scrypt:32768:8:1$9xVkxmqzbvDmUu7A$0ae78bf3ca45a8450dc523f4652fae30e6b42c84ef8fa7b9f873b541b14a5e7dcb5a881afd0e4fa47ee532ea6679afc078ff88a4fd111aa8d87c5113e11ec847', 'tec1@utixo.net', '2026-02-12 23:00:00'),
+(4, 'fusar', 'scrypt:32768:8:1$SbxUB9GOxtxDuWX0$6d50aec0bdf952fe0be364146e8f3f1fa6e6f59b08128c20e7e3c9964cead65a0d656eb798f0f03709bfa65090519bebee2211ede9263aebc5fb463459debe89', 'simofusar@gmail.com', '2026-02-20 08:15:59');
+
+--
 -- Indici per le tabelle scaricate
 --
+
+--
+-- Indici per le tabelle `conversations`
+--
+ALTER TABLE `conversations`
+  ADD PRIMARY KEY (`id`),
+  ADD KEY `idx_conv_user_updated` (`user_id`,`updated_at`);
 
 --
 -- Indici per le tabelle `faq`
@@ -130,44 +166,61 @@ ALTER TABLE `faq`
 --
 ALTER TABLE `logs`
   ADD PRIMARY KEY (`id`),
-  ADD KEY `user_id` (`user_id`);
+  ADD KEY `user_id` (`user_id`),
+  ADD KEY `idx_logs_user_conv_id` (`user_id`,`conversation_id`,`id`),
+  ADD KEY `fk_logs_conversation` (`conversation_id`);
 
 --
 -- Indici per le tabelle `utenti`
 --
 ALTER TABLE `utenti`
-  ADD PRIMARY KEY (`id`);
+  ADD PRIMARY KEY (`id`),
+  ADD UNIQUE KEY `uq_utenti_nome` (`nome`),
+  ADD UNIQUE KEY `uq_utenti_email` (`email`);
 
 --
 -- AUTO_INCREMENT per le tabelle scaricate
 --
 
 --
+-- AUTO_INCREMENT per la tabella `conversations`
+--
+ALTER TABLE `conversations`
+  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=12;
+
+--
 -- AUTO_INCREMENT per la tabella `faq`
 --
 ALTER TABLE `faq`
-  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=27;
+  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=25;
 
 --
 -- AUTO_INCREMENT per la tabella `logs`
 --
 ALTER TABLE `logs`
-  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=38;
+  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=59;
 
 --
 -- AUTO_INCREMENT per la tabella `utenti`
 --
 ALTER TABLE `utenti`
-  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=3;
+  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=5;
 
 --
 -- Limiti per le tabelle scaricate
 --
 
 --
+-- Limiti per la tabella `conversations`
+--
+ALTER TABLE `conversations`
+  ADD CONSTRAINT `fk_conv_user` FOREIGN KEY (`user_id`) REFERENCES `utenti` (`id`) ON DELETE CASCADE ON UPDATE CASCADE;
+
+--
 -- Limiti per la tabella `logs`
 --
 ALTER TABLE `logs`
+  ADD CONSTRAINT `fk_logs_conversation` FOREIGN KEY (`conversation_id`) REFERENCES `conversations` (`id`) ON DELETE SET NULL ON UPDATE CASCADE,
   ADD CONSTRAINT `logs_ibfk_1` FOREIGN KEY (`user_id`) REFERENCES `utenti` (`id`) ON DELETE SET NULL;
 COMMIT;
 

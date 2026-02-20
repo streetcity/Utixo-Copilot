@@ -1,0 +1,49 @@
+{% extends "admin.html" %}
+{% set active = 'faqs' %}
+
+{% block content %}
+  <div style="display:flex; align-items:flex-end; justify-content:space-between; gap:12px; flex-wrap:wrap">
+    <div>
+      <h1 style="margin-bottom:6px">FAQ</h1>
+      <p class="admin-muted">Gestisci il database FAQ usato dal Copilot.</p>
+    </div>
+    <a class="admin-btn" href="/admin/faqs/new" style="text-decoration:none; display:inline-flex; align-items:center; gap:8px">
+      <span>+ Nuova FAQ</span>
+    </a>
+  </div>
+
+  <section class="admin-card" style="margin-top:12px">
+    <div class="admin-table-wrap">
+      <table class="admin-table">
+        <thead>
+          <tr>
+            <th style="width:80px">ID</th>
+            <th style="width:140px">Categoria</th>
+            <th>Domanda</th>
+            <th style="width:140px">Aggiornata</th>
+            <th style="width:160px">Azioni</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for r in rows %}
+            <tr>
+              <td class="mono">{{ r.id }}</td>
+              <td>{{ r.categoria or 'generale' }}</td>
+              <td>{{ r.domanda_short }}</td>
+              <td class="mono">{{ r.data_aggiornamento or '' }}</td>
+              <td class="admin-actions">
+                <a class="admin-btn" href="/admin/faqs/edit/{{ r.id }}" style="text-decoration:none; margin-right:6px">Modifica</a>
+                <form method="post" action="/admin/faqs/delete/{{ r.id }}" style="display:inline" onsubmit="return confirm('Eliminare questa FAQ?')">
+                  <button class="admin-btn" type="submit" style="border-color:rgba(239,68,68,.25); background:rgba(239,68,68,.10); color:#fecaca">Elimina</button>
+                </form>
+              </td>
+            </tr>
+          {% endfor %}
+          {% if rows|length == 0 %}
+            <tr><td colspan="5" class="admin-muted">Nessuna FAQ presente.</td></tr>
+          {% endif %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+{% endblock %}

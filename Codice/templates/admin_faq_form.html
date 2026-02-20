@@ -1,0 +1,48 @@
+{% extends "admin.html" %}
+{% set active = 'faqs' %}
+
+{% block content %}
+  <div style="display:flex; align-items:flex-end; justify-content:space-between; gap:12px; flex-wrap:wrap">
+    <div>
+      <h1 style="margin-bottom:6px">{{ heading }}</h1>
+      <p class="admin-muted">Compila i campi e salva.</p>
+    </div>
+    <a class="admin-btn" href="/admin/faqs" style="text-decoration:none">← Indietro</a>
+  </div>
+
+  {% if error %}
+    <div class="admin-alert">{{ error }}</div>
+  {% endif %}
+
+  <section class="admin-card" style="margin-top:12px">
+    <form method="post" action="{{ form_action }}" class="admin-form">
+      <label>
+        <span>Categoria</span>
+        <input name="categoria" type="text" value="{{ (faq.categoria if faq else 'generale') }}" />
+      </label>
+
+      <label>
+        <span>Domanda</span>
+        <textarea name="domanda" rows="3" required>{{ faq.domanda if faq else '' }}</textarea>
+      </label>
+
+      <label>
+        <span>Risposta 1</span>
+        <textarea name="risposta1" rows="3">{{ faq.risposta1 if faq else '' }}</textarea>
+      </label>
+
+      <label>
+        <span>Risposta 2</span>
+        <textarea name="risposta2" rows="3">{{ faq.risposta2 if faq else '' }}</textarea>
+      </label>
+
+      <label>
+        <span>Risposta 3</span>
+        <textarea name="risposta3" rows="3">{{ faq.risposta3 if faq else '' }}</textarea>
+      </label>
+
+      <button type="submit" class="admin-btn-primary">Salva</button>
+      <div class="admin-hint">Tip: usa domande brevi e risposte alternative (1/2/3) per aumentare la probabilità di match.</div>
+    </form>
+  </section>
+{% endblock %}

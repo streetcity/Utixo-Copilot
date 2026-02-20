@@ -31,6 +31,25 @@
                 <button id="themeToggle" class="ghost-button" type="button" aria-label="Attiva/disattiva modalità scura">
                     🌙
                 </button>
+
+                <!-- Auth buttons (shown when logged out) -->
+                <div class="auth-area" id="authArea">
+                    <button id="loginBtn" class="ghost-button" type="button">Accedi</button>
+                    <button id="registerBtn" class="ghost-button" type="button">Registrati</button>
+
+                    <!-- User menu (shown when logged in) -->
+                    <div class="user-menu hidden" id="userMenu">
+                        <button id="userMenuBtn" class="ghost-button" type="button">
+                            Ciao, <span id="usernameLabel">utente</span> ▾
+                        </button>
+                        <div class="user-menu-dropdown hidden" id="userMenuDropdown">
+                            <!-- Puoi anche rimuovere questo se non lo vuoi proprio -->
+                            <button id="openChatsBtn" class="menu-item" type="button">Apri Copilot</button>
+                            <button id="logoutBtn" class="menu-item danger" type="button">Logout</button>
+                        </div>
+                    </div>
+                </div>
+
                 <a class="primary-button openChatBtn" href="#">Apri Copilot</a>
             </div>
         </div>
@@ -62,23 +81,21 @@
                         <span>FAQ configurabili</span>
                     </div>
                     <div class="metric">
-                        <strong>🌍</strong>
+                        <strong>🛟</strong>
                         <span>Supporto per clienti</span>
                     </div>
                 </div>
             </div>
 
-            <div class="hero-card">
-                <div class="hero-card-top">
-                    <div class="dot red"></div>
-                    <div class="dot yellow"></div>
-                    <div class="dot green"></div>
-                    <span class="hero-card-title">Preview</span>
-                </div>
-                <div class="hero-card-body">
-                    <div class="preview-line"></div>
-                    <div class="preview-line short"></div>
-                    <div class="preview-chat">
+            <div class="hero-preview">
+                <div class="preview-window">
+                    <div class="preview-topbar">
+                        <span class="dot red"></span>
+                        <span class="dot yellow"></span>
+                        <span class="dot green"></span>
+                        <span class="preview-title">Preview</span>
+                    </div>
+                    <div class="preview-content">
                         <div class="preview-bubble bot">Ciao! Come posso aiutarti?</div>
                         <div class="preview-bubble user">Ho un problema con la posta.</div>
                         <div class="preview-bubble bot">Dimmi l’errore e ti guido passo-passo.</div>
@@ -89,7 +106,7 @@
     </section>
 
     <!-- FEATURES -->
-    <section class="section" id="features">
+    <section id="features" class="section">
         <div class="section-inner">
             <h2>Cosa può fare per te</h2>
             <p class="section-subtitle">
@@ -97,7 +114,7 @@
                 Utixo Copilot riduce i tempi di attesa e ti aiuta a risolvere più velocemente.
             </p>
 
-            <div class="grid">
+            <div class="cards">
                 <div class="card">
                     <h3>Assistenza immediata</h3>
                     <p>Scrivi la tua richiesta e ricevi una risposta in pochi secondi, 24/7.</p>
@@ -115,58 +132,60 @@
     </section>
 
     <!-- HOW -->
-    <section class="section alt" id="how">
-        <div class="section-inner two-col">
-            <div>
-                <h2>Come funziona</h2>
-                <p class="section-subtitle">
-                    Inserisci una domanda: il chatbot analizza il testo e propone la risposta più pertinente tra i contenuti disponibili.
-                    L’obiettivo è guidarti rapidamente alla soluzione.
-                </p>
-
-                <ol class="steps">
-                    <li><strong>Scrivi</strong> la tua richiesta in chat.</li>
-                    <li><strong>Analisi</strong> della domanda e ricerca della risposta migliore.</li>
-                    <li><strong>Risposta</strong> immediata, con indicazioni operative.</li>
-                </ol>
-            </div>
-
-            <div class="callout">
-                <h3>Supporto su misura</h3>
-                <p>
-                    Utixo Copilot può essere personalizzato con contenuti specifici e flussi di assistenza.
-                    Se una richiesta richiede un operatore, possiamo attivare l’escalation e l’apertura ticket.
-                </p>
+    <section id="how" class="section section-alt">
+        <div class="section-inner">
+            <h2>Come funziona</h2>
+            <div class="steps">
+                <div class="step">
+                    <div class="step-num">1</div>
+                    <div class="step-body">
+                        <h3>Apri Copilot</h3>
+                        <p>Clicca su “Apri Copilot” o sul pulsante 💬 in basso a destra.</p>
+                    </div>
+                </div>
+                <div class="step">
+                    <div class="step-num">2</div>
+                    <div class="step-body">
+                        <h3>Scrivi la richiesta</h3>
+                        <p>Spiega cosa ti serve: errore, procedura, dubbio o domanda frequente.</p>
+                    </div>
+                </div>
+                <div class="step">
+                    <div class="step-num">3</div>
+                    <div class="step-body">
+                        <h3>Ottieni la soluzione</h3>
+                        <p>Ricevi una risposta chiara e operativa. Se accedi, puoi rivedere lo storico delle chat.</p>
+                    </div>
+                </div>
             </div>
         </div>
     </section>
 
     <!-- FAQ -->
-    <section class="section" id="faq">
+    <section id="faq" class="section">
         <div class="section-inner">
             <h2>FAQ</h2>
-            <div class="accordion">
+            <div class="faq">
                 <details>
-                    <summary>Posso usarlo subito?</summary>
-                    <p>Sì: puoi iniziare a fare domande direttamente dalla chat e ottenere risposte immediate.</p>
+                    <summary>Utixo Copilot è attivo 24/7?</summary>
+                    <p>Sì, puoi usarlo in qualsiasi momento. Se accedi, le chat vengono salvate nel tuo profilo.</p>
                 </details>
                 <details>
-                    <summary>Che tipo di domande posso fare?</summary>
-                    <p>Domande di assistenza: più sei specifico (errore, contesto, cosa stavi facendo), più la risposta sarà efficace.</p>
+                    <summary>Posso rivedere le chat passate?</summary>
+                    <p>Sì: effettua l’accesso e la lista chat sarà visibile a sinistra nel Copilot.</p>
                 </details>
                 <details>
-                    <summary>Si può parlare con un operatore?</summary>
-                    <p>Sì: possiamo integrare l’escalation verso un operatore e l’apertura ticket quando necessario.</p>
+                    <summary>È possibile aggiungere nuove FAQ?</summary>
+                    <p>Sì, tramite la sezione admin puoi aggiornare e ampliare il database delle FAQ.</p>
                 </details>
             </div>
         </div>
     </section>
 
-    <!-- FOOTER -->
     <footer class="footer">
         <div class="footer-inner">
-            <span>© Utixo</span>
-            <span class="muted">Utixo Copilot • Assistenza clienti</span>
+            <span>Public tool</span>
+            <span>Powered by Utixo</span>
         </div>
     </footer>
 
@@ -185,16 +204,77 @@
         </div>
 
         <div class="chat-drawer-body">
-            <div class="chat-ui">
-                <div id="messages" class="chat-messages" aria-live="polite"></div>
+            <div class="chat-tools">
+                <button id="newChatBtn" class="chip-button" type="button">Nuova chat</button>
+                <span id="chatLoginHint" class="chat-hint">Accedi per salvare e rivedere le chat.</span>
+            </div>
 
-                <form id="chatForm" class="chat-input-bar" autocomplete="off">
-                    <input id="userInput" type="text" placeholder="Scrivi un messaggio…" aria-label="Scrivi un messaggio" />
-                    <button id="sendBtn" type="submit" class="send-button">Invia</button>
-                </form>
+            <div class="chat-layout">
+                <div id="conversationsPane" class="chat-conversations hidden" aria-label="Elenco conversazioni">
+                    <div class="chat-conversations-header">Le mie chat</div>
+                    <div id="conversationsList" class="chat-conversations-list"></div>
+                </div>
+
+                <div class="chat-ui">
+                    <div id="messages" class="chat-messages" aria-live="polite"></div>
+
+                    <form id="chatForm" class="chat-input-bar" autocomplete="off">
+                        <input id="userInput" type="text" placeholder="Scrivi un messaggio…" aria-label="Scrivi un messaggio" />
+                        <button id="sendBtn" type="submit" class="send-button">Invia</button>
+                    </form>
+                </div>
             </div>
         </div>
     </aside>
+
+    <!-- AUTH MODALS -->
+    <div id="modalBackdrop" class="modal-backdrop hidden" aria-hidden="true"></div>
+
+    <div id="loginModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="loginTitle">
+        <div class="modal-card">
+            <div class="modal-header">
+                <h3 id="loginTitle">Accedi</h3>
+                <button class="icon-button" type="button" data-close-modal="loginModal" aria-label="Chiudi">✕</button>
+            </div>
+            <div id="loginError" class="modal-error hidden"></div>
+            <form id="loginForm" class="modal-form" autocomplete="off">
+                <label class="field">
+                    <span>Username</span>
+                    <input id="loginUsername" type="text" required />
+                </label>
+                <label class="field">
+                    <span>Password</span>
+                    <input id="loginPassword" type="password" required />
+                </label>
+                <button class="primary-button full" type="submit">Entra</button>
+            </form>
+        </div>
+    </div>
+
+    <div id="registerModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="registerTitle">
+        <div class="modal-card">
+            <div class="modal-header">
+                <h3 id="registerTitle">Registrati</h3>
+                <button class="icon-button" type="button" data-close-modal="registerModal" aria-label="Chiudi">✕</button>
+            </div>
+            <div id="registerError" class="modal-error hidden"></div>
+            <form id="registerForm" class="modal-form" autocomplete="off">
+                <label class="field">
+                    <span>Username</span>
+                    <input id="registerUsername" type="text" minlength="3" required />
+                </label>
+                <label class="field">
+                    <span>Email (opzionale)</span>
+                    <input id="registerEmail" type="email" />
+                </label>
+                <label class="field">
+                    <span>Password</span>
+                    <input id="registerPassword" type="password" minlength="8" required />
+                </label>
+                <button class="primary-button full" type="submit">Crea account</button>
+            </form>
+        </div>
+    </div>
 
     <script src="/static/javascript.js" defer></script>
 </body>
