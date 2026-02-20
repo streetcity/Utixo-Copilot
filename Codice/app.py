@@ -4,6 +4,10 @@ import os
 import random
 import re
 import hashlib
+import json
+import urllib.request
+import urllib.error
+
 from datetime import timedelta
 from typing import Dict, Optional, Tuple, Any
 
@@ -21,7 +25,6 @@ from flask import (
     session,
     url_for,
 )
-from werkzeug.security import generate_password_hash, check_password_hash
 
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
@@ -34,7 +37,7 @@ load_dotenv()
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 STATIC_DIR = os.path.join(BASE_DIR, "static")
 
-app = Flask(__name__)
+app = Flask(__name__, static_folder="static", template_folder="templates")
 
 # Session
 app.secret_key = os.getenv("SECRET_KEY", "CHANGE_ME_PLEASE")
@@ -48,126 +51,303 @@ DB_PORT = int(os.getenv("DB_PORT", "3306"))
 
 SIM_THRESHOLD = float(os.getenv("SIM_THRESHOLD", "0.25"))
 
+# Ticket URL (WHMCS)
+TICKET_URL = os.getenv("TICKET_URL", "https://shop.serverweb.net/submitticket.php?step=2&deptid=2")
+
+# Humanize replies via OpenAI (optional)
+HUMANIZE_ENABLED = (os.getenv("HUMANIZE_ENABLED", "1").strip() == "1")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "").strip()
+OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-5.2").strip()
+OPENAI_TEMPERATURE = float(os.getenv("OPENAI_TEMPERATURE", "0.3"))
+OPENAI_TIMEOUT_SEC = int(os.getenv("OPENAI_TIMEOUT_SEC", "12"))
+
 # Admin hard-allowlist (username). Default: admin
 ADMIN_USERS = {u.strip() for u in (os.getenv("ADMIN_USERS", "admin") or "admin").split(",") if u.strip()}
 
-STOPWORDS = [
-    "a", "ad", "al", "alla", "alle", "allo", "ai", "agli", "anche", "che", "chi", "ci", "con", "come",
-    "da", "dal", "dalla", "delle", "del", "di", "e", "ed", "è", "gli", "ha", "hai", "ho", "i", "il", "in",
-    "io", "la", "le", "lo", "loro", "ma", "mi", "ne", "nel", "nella", "no", "non", "o", "per", "poi",
-    "se", "sei", "si", "su", "tra", "un", "una", "uno", "voi"
-]
-
-# Cache schema (per non interrogare information_schema ad ogni request)
-_SCHEMA_CACHE: Dict[str, Dict[str, bool]] = {}
-
 # =========================
-# Helpers
+# DB helpers
 # =========================
-def clean_text(text: str) -> str:
-    text = (text or "").lower()
-    for ch in [".", ",", "!", "?", ":", ";", "(", ")", "[", "]", "{", "}", "'", '"', "-", "_", "/", "\\"]:
-        text = text.replace(ch, " ")
-    words = text.split()
-    new_words = [w for w in words if w not in STOPWORDS]
-    return " ".join(new_words)
-
-
 def get_connection():
     return mysql.connector.connect(
-        host=DB_HOST,
-        user=DB_USER,
-        password=DB_PASSWORD,
-        database=DB_NAME,
-        port=DB_PORT,
+        host=DB_HOST, user=DB_USER, password=DB_PASSWORD, database=DB_NAME, port=DB_PORT
     )
 
 
-def _has_column(conn, table: str, column: str) -> bool:
-    """Check colonna esistente (con cache)."""
-    key = f"{DB_NAME}.{table}"
-    if key not in _SCHEMA_CACHE:
-        _SCHEMA_CACHE[key] = {}
-    if column in _SCHEMA_CACHE[key]:
-        return _SCHEMA_CACHE[key][column]
+def table_has_column(conn, table: str, column: str) -> bool:
+    cur = conn.cursor()
+    cur.execute(
+        """
+        SELECT COUNT(*)
+        FROM INFORMATION_SCHEMA.COLUMNS
+        WHERE TABLE_SCHEMA=%s AND TABLE_NAME=%s AND COLUMN_NAME=%s
+        """,
+        (DB_NAME, table, column),
+    )
+    ok = (cur.fetchone() or [0])[0] > 0
+    cur.close()
+    return bool(ok)
+
+
+# =========================
+# Text helpers
+# =========================
+def _extract_output_text_from_openai_response(payload: dict) -> str:
+    # Prefer the aggregated field if present
+    if isinstance(payload, dict) and isinstance(payload.get("output_text"), str) and payload["output_text"].strip():
+        return payload["output_text"].strip()
+
+    # Fallback: walk output items
+    out = payload.get("output")
+    if not isinstance(out, list):
+        return ""
+    parts = []
+    for item in out:
+        if not isinstance(item, dict):
+            continue
+        content = item.get("content")
+        if not isinstance(content, list):
+            continue
+        for c in content:
+            if not isinstance(c, dict):
+                continue
+            # Most common: {"type":"output_text","text":"..."}
+            t = c.get("type")
+            if t in ("output_text", "text") and isinstance(c.get("text"), str):
+                parts.append(c["text"])
+    return "\n".join([p for p in parts if p]).strip()
+
+
+def humanize_answer(user_question: str, skeleton_answer: str) -> str:
+    """Rende la risposta più naturale SENZA aggiungere nuove informazioni.
+    Se OPENAI_API_KEY non è impostata o HUMANIZE_ENABLED=0 -> ritorna skeleton_answer.
+    """
+    if not HUMANIZE_ENABLED or not OPENAI_API_KEY:
+        return skeleton_answer
+
+    # Guardrails: niente prompt injection dall'utente
+    instructions = (
+        "Sei Utixo Copilot, assistente tecnico di Utixo. "
+        "Il tuo compito è RISCRIVERE una risposta esistente rendendola più umana, chiara e ben formattata.\n\n"
+        "REGOLE OBBLIGATORIE:\n"
+        "1) NON aggiungere informazioni nuove non presenti nella risposta base.\n"
+        "2) NON inventare passaggi, link, prezzi, nomi di prodotti o procedure.\n"
+        "3) Mantieni TUTTI i punti importanti della risposta base (lo 'scheletro').\n"
+        "4) Se la risposta base è troppo corta o ambigua, NON espandere: al massimo fai una domanda di chiarimento in chiusura.\n"
+        "5) Rispondi in italiano.\n"
+        "6) Usa paragrafi brevi e, se utile, punti elenco."
+    )
+
+    user_input = (
+        "DOMANDA UTENTE:\n"
+        f"{user_question.strip()}\n\n"
+        "RISPOSTA BASE (da mantenere come contenuto, ma riscrivi tono/forma):\n"
+        f"{skeleton_answer.strip()}\n\n"
+        "Ora riscrivi la risposta rispettando le REGOLE."
+    )
+
+    body = {
+        "model": OPENAI_MODEL,
+        "instructions": instructions,
+        "input": user_input,
+        "temperature": OPENAI_TEMPERATURE,
+    }
+
+    req = urllib.request.Request(
+        "https://api.openai.com/v1/responses",
+        data=json.dumps(body).encode("utf-8"),
+        headers={
+            "Authorization": f"Bearer {OPENAI_API_KEY}",
+            "Content-Type": "application/json",
+        },
+        method="POST",
+    )
 
     try:
-        cur = conn.cursor()
-        cur.execute(
-            """
-            SELECT COUNT(*)
-            FROM information_schema.COLUMNS
-            WHERE TABLE_SCHEMA=%s AND TABLE_NAME=%s AND COLUMN_NAME=%s
-            """,
-            (DB_NAME, table, column),
-        )
-        exists = (cur.fetchone()[0] or 0) > 0
-        cur.close()
+        with urllib.request.urlopen(req, timeout=OPENAI_TIMEOUT_SEC) as resp:
+            raw = resp.read().decode("utf-8", errors="replace")
+            payload = json.loads(raw)
+            out_text = _extract_output_text_from_openai_response(payload)
+            return out_text if out_text else skeleton_answer
     except Exception:
-        exists = False
-
-    _SCHEMA_CACHE[key][column] = bool(exists)
-    return bool(exists)
+        # In caso di qualunque errore, non blocchiamo la chat
+        return skeleton_answer
 
 
-def admin_required():
-    if not session.get("admin_user_id"):
-        return redirect(url_for("admin_login"))
+def clean_text(text: str) -> str:
+    t = (text or "").lower()
+    t = re.sub(r"[^\w\s]", " ", t, flags=re.UNICODE)
+    t = re.sub(r"\s+", " ", t).strip()
+    return t
+
+
+# =========================
+# Auth helpers
+# =========================
+def current_user():
+    uid = session.get("user_id")
+    uname = session.get("username")
+    if uid and uname:
+        return {"id": uid, "username": uname}
     return None
 
 
-def current_user() -> Optional[Dict[str, Any]]:
-    uid = session.get("user_id")
-    if not uid:
-        return None
-    return {"id": int(uid), "username": session.get("username") or ""}
+def set_user_session(user_id: int, username: str):
+    session.permanent = True
+    session["user_id"] = int(user_id)
+    session["username"] = username
 
 
-def _is_legacy_sha256_hash(pw: str) -> bool:
-    return bool(re.fullmatch(r"[0-9a-fA-F]{64}", pw or ""))
+def clear_user_session():
+    session.pop("user_id", None)
+    session.pop("username", None)
 
 
-def verify_password(stored_password: str, plain_password: str) -> Tuple[bool, bool]:
-    """Return (ok, needs_upgrade). Supports both legacy SHA256 hex and werkzeug hashes."""
-    stored_password = stored_password or ""
-    plain_password = plain_password or ""
-
-    # Werkzeug hashes
-    if stored_password.startswith(("scrypt:", "pbkdf2:", "argon2:")):
-        try:
-            return (check_password_hash(stored_password, plain_password), False)
-        except Exception:
-            return (False, False)
-
-    # Legacy SHA256 hex
-    if _is_legacy_sha256_hash(stored_password):
-        digest = hashlib.sha256(plain_password.encode("utf-8")).hexdigest()
-        ok = digest.lower() == stored_password.lower()
-        return (ok, ok)  # if ok -> upgrade
-
-    return (False, False)
+# =========================
+# Password helpers (upgrade legacy hashes)
+# =========================
+def is_sha256_hex(s: str) -> bool:
+    return bool(re.fullmatch(r"[0-9a-fA-F]{64}", (s or "").strip()))
 
 
-def maybe_upgrade_password(conn, user_id: int, stored_password: str, plain_password: str) -> None:
-    ok, needs_upgrade = verify_password(stored_password, plain_password)
-    if not ok or not needs_upgrade:
-        return
+def sha256_hex(password: str) -> str:
+    return hashlib.sha256((password or "").encode("utf-8")).hexdigest()
+
+
+def check_password_and_upgrade(conn, user_id: int, password_plain: str, stored_hash: str) -> bool:
+    """
+    Supporta:
+    - legacy: SHA256 hexdigest
+    - nuovo: werkzeug (pbkdf2:sha256, scrypt, etc)
+    """
     try:
-        new_hash = generate_password_hash(plain_password)
-        cur = conn.cursor()
-        cur.execute("UPDATE utenti SET password=%s WHERE id=%s", (new_hash, int(user_id)))
-        conn.commit()
-        cur.close()
+        from werkzeug.security import check_password_hash, generate_password_hash
     except Exception:
-        try:
-            conn.rollback()
-        except Exception:
-            pass
+        # Se werkzeug non disponibile, fallback solo sha256
+        return sha256_hex(password_plain) == (stored_hash or "")
+
+    stored_hash = (stored_hash or "").strip()
+
+    # Legacy sha256
+    if is_sha256_hex(stored_hash):
+        ok = sha256_hex(password_plain) == stored_hash.lower()
+        if ok:
+            # upgrade hash
+            new_hash = generate_password_hash(password_plain)
+            cur = conn.cursor()
+            cur.execute("UPDATE utenti SET password=%s WHERE id=%s", (new_hash, int(user_id)))
+            conn.commit()
+            cur.close()
+        return ok
+
+    # Werkzeug hash
+    return check_password_hash(stored_hash, password_plain)
 
 
+def hash_password_new(password_plain: str) -> str:
+    try:
+        from werkzeug.security import generate_password_hash
+        return generate_password_hash(password_plain)
+    except Exception:
+        return sha256_hex(password_plain)
+
+
+# =========================
+# Static routes
+# =========================
+@app.get("/")
+def home():
+    return send_from_directory(STATIC_DIR, "index.html")
+
+
+@app.get("/static/<path:filename>")
+def static_files(filename):
+    return send_from_directory(STATIC_DIR, filename)
+
+
+# =========================
+# Auth endpoints
+# =========================
+@app.get("/me")
+def me():
+    user = current_user()
+    return jsonify({"user": user})
+
+
+@app.post("/auth/register")
+def register():
+    data = request.get_json(silent=True) or {}
+    username = (data.get("username") or "").strip()
+    password = (data.get("password") or "").strip()
+    email = (data.get("email") or "").strip()
+
+    if not username or not password:
+        return jsonify({"ok": False, "error": "Username e password obbligatori."}), 400
+
+    conn = get_connection()
+    cur = conn.cursor(dictionary=True)
+    cur.execute("SELECT id FROM utenti WHERE nome=%s LIMIT 1", (username,))
+    if cur.fetchone():
+        cur.close()
+        conn.close()
+        return jsonify({"ok": False, "error": "Username già esistente."}), 400
+
+    pw_hash = hash_password_new(password)
+    cur2 = conn.cursor()
+    cur2.execute(
+        "INSERT INTO utenti (nome, password, email) VALUES (%s, %s, %s)",
+        (username, pw_hash, email or None),
+    )
+    conn.commit()
+    user_id = cur2.lastrowid
+    cur2.close()
+    cur.close()
+    conn.close()
+
+    set_user_session(user_id, username)
+    return jsonify({"ok": True, "user": {"id": user_id, "username": username}})
+
+
+@app.post("/auth/login")
+def login():
+    data = request.get_json(silent=True) or {}
+    username = (data.get("username") or "").strip()
+    password = (data.get("password") or "").strip()
+
+    if not username or not password:
+        return jsonify({"ok": False, "error": "Username e password obbligatori."}), 400
+
+    conn = get_connection()
+    cur = conn.cursor(dictionary=True)
+    cur.execute("SELECT id, nome, password FROM utenti WHERE nome=%s LIMIT 1", (username,))
+    row = cur.fetchone()
+    if not row:
+        cur.close()
+        conn.close()
+        return jsonify({"ok": False, "error": "Credenziali non valide."}), 401
+
+    ok = check_password_and_upgrade(conn, int(row["id"]), password, row["password"])
+    cur.close()
+    conn.close()
+
+    if not ok:
+        return jsonify({"ok": False, "error": "Credenziali non valide."}), 401
+
+    set_user_session(int(row["id"]), row["nome"])
+    return jsonify({"ok": True, "user": {"id": int(row["id"]), "username": row["nome"]}})
+
+
+@app.post("/auth/logout")
+def logout():
+    clear_user_session()
+    session.pop("admin_user_id", None)
+    session.pop("admin_username", None)
+    return jsonify({"ok": True})
+
+
+# =========================
+# Conversations helpers
+# =========================
 def create_conversation(conn, user_id: int, title: str) -> int:
-    title = (title or "").strip() or "Nuova chat"
-    title = title[:120]
     cur = conn.cursor()
     cur.execute(
         "INSERT INTO conversations (user_id, title, created_at, updated_at) VALUES (%s, %s, NOW(), NOW())",
@@ -181,202 +361,27 @@ def create_conversation(conn, user_id: int, title: str) -> int:
 
 def ensure_conversation_belongs(conn, conversation_id: int, user_id: int) -> bool:
     cur = conn.cursor()
-    cur.execute(
-        "SELECT id FROM conversations WHERE id=%s AND user_id=%s LIMIT 1",
-        (int(conversation_id), int(user_id)),
-    )
-    row = cur.fetchone()
+    cur.execute("SELECT id FROM conversations WHERE id=%s AND user_id=%s LIMIT 1", (int(conversation_id), int(user_id)))
+    ok = cur.fetchone() is not None
     cur.close()
-    return bool(row)
+    return bool(ok)
 
 
-def touch_conversation(conn, conversation_id: int) -> None:
-    try:
-        cur = conn.cursor()
-        cur.execute("UPDATE conversations SET updated_at=NOW() WHERE id=%s", (int(conversation_id),))
-        conn.commit()
-        cur.close()
-    except Exception:
-        try:
-            conn.rollback()
-        except Exception:
-            pass
-
-
-def insert_log_message(
-    user_msg: str,
-    reply: str,
-    best_score: float,
-    matched_id,
-    user_id: Optional[int] = None,
-    conversation_id: Optional[int] = None,
-):
-    """Inserisce un log compatibile con schema vecchio e schema nuovo (con conversation_id)."""
-    try:
-        conn = get_connection()
-        cur = conn.cursor()
-
-        resolved = 1 if matched_id else 0
-        faq_id_val = matched_id  # può essere None
-
-        has_conv = _has_column(conn, "logs", "conversation_id")
-
-        if has_conv:
-            cur.execute(
-                "INSERT INTO logs (user_id, conversation_id, messaggio_utente, risposta_bot, similarity, faq_id, resolved) "
-                "VALUES (%s, %s, %s, %s, %s, %s, %s)",
-                (
-                    int(user_id) if user_id else None,
-                    int(conversation_id) if conversation_id else None,
-                    user_msg,
-                    reply,
-                    round(float(best_score), 6),
-                    faq_id_val,
-                    resolved,
-                ),
-            )
-        else:
-            cur.execute(
-                "INSERT INTO logs (user_id, messaggio_utente, risposta_bot, similarity, faq_id, resolved) "
-                "VALUES (%s, %s, %s, %s, %s, %s)",
-                (int(user_id) if user_id else None, user_msg, reply, round(float(best_score), 6), faq_id_val, resolved),
-            )
-
-        conn.commit()
-        cur.close()
-        conn.close()
-    except Exception:
-        try:
-            cur.close()
-        except Exception:
-            pass
-        try:
-            conn.close()
-        except Exception:
-            pass
-
-
-# =========================
-# Public routes
-# =========================
-@app.get("/")
-def site_home():
-    return send_from_directory(STATIC_DIR, "index.html")
-
-
-@app.get("/health")
-def health():
-    return jsonify({"ok": True})
-
-
-# =========================
-# Auth (users)
-# =========================
-@app.get("/auth/me")
-def auth_me():
-    return jsonify({"user": current_user()})
-
-
-@app.post("/auth/register")
-def auth_register():
-    data = request.get_json(silent=True) or {}
-    username = (data.get("username") or "").strip()
-    password = (data.get("password") or "").strip()
-    email = (data.get("email") or "").strip() or None
-
-    if not username or not password:
-        return jsonify({"ok": False, "error": "Inserisci username e password."}), 400
-    if len(username) < 3:
-        return jsonify({"ok": False, "error": "Lo username deve avere almeno 3 caratteri."}), 400
-    if len(password) < 8:
-        return jsonify({"ok": False, "error": "La password deve avere almeno 8 caratteri."}), 400
-
-    pw_hash = generate_password_hash(password)
-
-    conn = get_connection()
-    cur = conn.cursor(dictionary=True)
-
-    cur.execute("SELECT id FROM utenti WHERE nome=%s LIMIT 1", (username,))
-    if cur.fetchone():
-        cur.close()
-        conn.close()
-        return jsonify({"ok": False, "error": "Username già in uso."}), 409
-
-    if email:
-        cur.execute("SELECT id FROM utenti WHERE email=%s LIMIT 1", (email,))
-        if cur.fetchone():
-            cur.close()
-            conn.close()
-            return jsonify({"ok": False, "error": "Email già in uso."}), 409
-
-    cur2 = conn.cursor()
-    cur2.execute(
-        "INSERT INTO utenti (nome, password, email, data_creazione) VALUES (%s, %s, %s, NOW())",
-        (username, pw_hash, email),
-    )
+def touch_conversation(conn, conversation_id: int):
+    cur = conn.cursor()
+    cur.execute("UPDATE conversations SET updated_at=NOW() WHERE id=%s", (int(conversation_id),))
     conn.commit()
-    user_id = int(cur2.lastrowid)
-    cur2.close()
     cur.close()
-    conn.close()
-
-    # auto-login
-    session.permanent = True
-    session["user_id"] = user_id
-    session["username"] = username
-
-    return jsonify({"ok": True, "user": {"id": user_id, "username": username}})
-
-
-@app.post("/auth/login")
-def auth_login():
-    data = request.get_json(silent=True) or {}
-    username = (data.get("username") or "").strip()
-    password = (data.get("password") or "").strip()
-
-    if not username or not password:
-        return jsonify({"ok": False, "error": "Inserisci username e password."}), 400
-
-    conn = get_connection()
-    cur = conn.cursor(dictionary=True)
-    cur.execute("SELECT id, nome, password, email FROM utenti WHERE nome=%s LIMIT 1", (username,))
-    row = cur.fetchone()
-    cur.close()
-
-    if not row:
-        conn.close()
-        return jsonify({"ok": False, "error": "Credenziali non valide."}), 401
-
-    ok, _needs = verify_password(row.get("password") or "", password)
-    if not ok:
-        conn.close()
-        return jsonify({"ok": False, "error": "Credenziali non valide."}), 401
-
-    maybe_upgrade_password(conn, int(row["id"]), row.get("password") or "", password)
-    conn.close()
-
-    session.permanent = True
-    session["user_id"] = int(row["id"])
-    session["username"] = row.get("nome") or username
-
-    return jsonify({"ok": True, "user": {"id": int(row["id"]), "username": session["username"]}})
-
-
-@app.post("/auth/logout")
-def auth_logout():
-    for k in ["user_id", "username"]:
-        session.pop(k, None)
-    return jsonify({"ok": True})
 
 
 # =========================
 # Conversations API
 # =========================
-@app.get("/api/conversations")
-def api_conversations():
+@app.get("/conversations")
+def list_conversations():
     user = current_user()
     if not user:
-        return jsonify({"ok": False, "error": "Non autenticato"}), 401
+        return jsonify({"ok": True, "conversations": []})
 
     conn = get_connection()
     cur = conn.cursor(dictionary=True)
@@ -387,101 +392,94 @@ def api_conversations():
     rows = cur.fetchall()
     cur.close()
     conn.close()
-
     return jsonify({"ok": True, "conversations": rows})
 
 
-@app.post("/api/conversations/new")
-def api_conversations_new():
+@app.get("/conversations/<int:conversation_id>/messages")
+def conversation_messages(conversation_id: int):
     user = current_user()
     if not user:
-        return jsonify({"ok": False, "error": "Non autenticato"}), 401
-
-    data = request.get_json(silent=True) or {}
-    title = (data.get("title") or "").strip() or "Nuova chat"
+        return jsonify({"ok": False, "error": "Non autorizzato"}), 401
 
     conn = get_connection()
-    cid = create_conversation(conn, int(user["id"]), title)
-    conn.close()
-
-    return jsonify({"ok": True, "conversation_id": cid})
-
-
-@app.post("/api/conversations/select")
-def api_conversations_select():
-    user = current_user()
-    if not user:
-        return jsonify({"ok": False, "error": "Non autenticato"}), 401
-
-    data = request.get_json(silent=True) or {}
-    conversation_id = data.get("conversation_id")
-
-    if not conversation_id:
-        return jsonify({"ok": False, "error": "conversation_id mancante"}), 400
-
-    conn = get_connection()
-    ok = ensure_conversation_belongs(conn, int(conversation_id), int(user["id"]))
-    conn.close()
-
-    if not ok:
-        return jsonify({"ok": False, "error": "Conversazione non trovata"}), 404
-
-    return jsonify({"ok": True, "conversation_id": int(conversation_id)})
-
-
-@app.get("/api/conversations/<int:conversation_id>/messages")
-def api_conversation_messages(conversation_id: int):
-    user = current_user()
-    if not user:
-        return jsonify({"ok": False, "error": "Non autenticato"}), 401
-
-    conn = get_connection()
-    ok = ensure_conversation_belongs(conn, int(conversation_id), int(user["id"]))
-    if not ok:
+    if not ensure_conversation_belongs(conn, conversation_id, int(user["id"])):
         conn.close()
-        return jsonify({"ok": False, "error": "Conversazione non trovata"}), 404
+        return jsonify({"ok": False, "error": "Non autorizzato"}), 403
 
-    # logs: recupera ultimi messaggi per questa conversazione (se colonna esiste)
-    has_conv = _has_column(conn, "logs", "conversation_id")
     cur = conn.cursor(dictionary=True)
-
-    if has_conv:
+    # Se esiste conversation_id nella tabella logs, filtra. Altrimenti (vecchi DB) ritorna vuoto
+    if table_has_column(conn, "logs", "conversation_id"):
         cur.execute(
             """
-            SELECT id, data_ora, messaggio_utente, risposta_bot, similarity, faq_id, resolved
+            SELECT user_msg, reply, created_at
             FROM logs
-            WHERE user_id=%s AND conversation_id=%s
+            WHERE conversation_id=%s AND user_id=%s
             ORDER BY id ASC
-            LIMIT 500
             """,
-            (int(user["id"]), int(conversation_id)),
+            (int(conversation_id), int(user["id"])),
         )
+        rows = cur.fetchall()
     else:
-        # fallback: non possiamo filtrare per conversation_id
-        cur.execute(
-            """
-            SELECT id, data_ora, messaggio_utente, risposta_bot, similarity, faq_id, resolved
-            FROM logs
-            WHERE user_id=%s
-            ORDER BY id DESC
-            LIMIT 200
-            """,
-            (int(user["id"]),),
-        )
+        rows = []
 
-    rows = cur.fetchall()
     cur.close()
     conn.close()
-
     return jsonify({"ok": True, "messages": rows})
 
 
 # =========================
-# Static assets
+# Logging
 # =========================
-@app.get("/static/<path:filename>")
-def static_files(filename: str):
-    return send_from_directory(STATIC_DIR, filename)
+def insert_log_message(
+    user_msg: str,
+    reply: str,
+    best_score: float,
+    matched_id: Optional[int],
+    user_id: Optional[int],
+    conversation_id: Optional[int],
+):
+    try:
+        conn = get_connection()
+        cur = conn.cursor()
+        has_conv = table_has_column(conn, "logs", "conversation_id")
+
+        if has_conv:
+            cur.execute(
+                """
+                INSERT INTO logs (user_msg, reply, best_score, faq_matched_id, user_id, conversation_id, resolved, created_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, NOW())
+                """,
+                (
+                    user_msg,
+                    reply,
+                    float(best_score),
+                    matched_id,
+                    user_id,
+                    conversation_id,
+                    "no",
+                ),
+            )
+        else:
+            cur.execute(
+                """
+                INSERT INTO logs (user_msg, reply, best_score, faq_matched_id, user_id, resolved, created_at)
+                VALUES (%s, %s, %s, %s, %s, %s, NOW())
+                """,
+                (
+                    user_msg,
+                    reply,
+                    float(best_score),
+                    matched_id,
+                    user_id,
+                    "no",
+                ),
+            )
+
+        conn.commit()
+        cur.close()
+        conn.close()
+    except Exception:
+        pass
 
 
 # =========================
@@ -553,6 +551,8 @@ def chat():
         risposte = [r for r in (best_row.get("risposta1"), best_row.get("risposta2"), best_row.get("risposta3")) if r]
         reply = random.choice(risposte) if risposte else "Non ho una risposta precisa."
         matched_id = best_row["id"]
+        # Riscrittura "più umana" mantenendo lo scheletro (se abilitata)
+        reply = humanize_answer(user_msg, reply)
 
     insert_log_message(
         user_msg=user_msg,
@@ -577,6 +577,7 @@ def chat():
             "faq_matched_id": matched_id,
             "similarity": round(best_score, 3),
             "conversation_id": conversation_id,
+            "ticket_url": TICKET_URL,
         }
     )
 
@@ -613,247 +614,205 @@ def admin_login_post():
         conn.close()
         return render_template("admin_login.html", error="Credenziali non valide.")
 
-    ok, _needs = verify_password(row.get("password") or "", password)
-    if not ok:
-        conn.close()
-        return render_template("admin_login.html", error="Credenziali non valide.")
-
-    maybe_upgrade_password(conn, int(row["id"]), row.get("password") or "", password)
+    ok = check_password_and_upgrade(conn, int(row["id"]), password, row["password"])
     conn.close()
+    if not ok:
+        return render_template("admin_login.html", error="Credenziali non valide.")
 
     session.permanent = True
     session["admin_user_id"] = int(row["id"])
-    session["admin_username"] = row.get("nome") or username
-    session["admin_email"] = row.get("email") or ""
+    session["admin_username"] = row["nome"]
     return redirect(url_for("admin_dashboard"))
 
 
 @app.get("/admin/logout")
 def admin_logout():
-    session.clear()
+    session.pop("admin_user_id", None)
+    session.pop("admin_username", None)
     return redirect(url_for("admin_login"))
 
 
-# -------------------------
-# (RESTO ADMIN INVARIATO)
-# -------------------------
+def admin_required():
+    if not session.get("admin_user_id"):
+        return redirect(url_for("admin_login"))
+    return None
+
+
 @app.get("/admin")
 def admin_dashboard():
-    redir = admin_required()
-    if redir:
-        return redir
+    red = admin_required()
+    if red:
+        return red
 
+    # stats
     conn = get_connection()
     cur = conn.cursor(dictionary=True)
 
-    cur.execute("SELECT COUNT(*) AS c FROM faq")
-    faq_count = int(cur.fetchone()["c"])
+    cur.execute("SELECT COUNT(*) AS n FROM faq")
+    faq_count = int((cur.fetchone() or {}).get("n", 0))
 
-    cur.execute("SELECT COUNT(*) AS c FROM logs")
-    log_count = int(cur.fetchone()["c"])
+    cur.execute("SELECT COUNT(*) AS n FROM logs")
+    log_count = int((cur.fetchone() or {}).get("n", 0))
 
+    cur.execute("SELECT COUNT(*) AS n FROM logs WHERE resolved='si'")
+    resolved_yes = int((cur.fetchone() or {}).get("n", 0))
+
+    cur.execute("SELECT COUNT(*) AS n FROM logs WHERE resolved='no'")
+    resolved_no = int((cur.fetchone() or {}).get("n", 0))
+
+    # last 7 days trend
     cur.execute(
         """
-        SELECT DATE(data_ora) AS d, COUNT(*) AS c
+        SELECT DATE(created_at) AS d, COUNT(*) AS n
         FROM logs
-        GROUP BY DATE(data_ora)
-        ORDER BY d DESC
-        LIMIT 14
+        WHERE created_at >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)
+        GROUP BY DATE(created_at)
+        ORDER BY d ASC
         """
     )
-    daily = cur.fetchall()
-
-    cur.execute(
-        """
-        SELECT resolved, COUNT(*) AS c
-        FROM logs
-        GROUP BY resolved
-        """
-    )
-    resolved_rows = cur.fetchall()
+    trend = cur.fetchall()
 
     cur.close()
     conn.close()
 
-    resolved_map = {int(r["resolved"]): int(r["c"]) for r in resolved_rows}
-    resolved_ok = resolved_map.get(1, 0)
-    resolved_no = resolved_map.get(0, 0)
-
     return render_template(
         "admin_dashboard.html",
-        title="Admin - Report",
         faq_count=faq_count,
         log_count=log_count,
-        resolved_ok=resolved_ok,
+        resolved_yes=resolved_yes,
         resolved_no=resolved_no,
-        daily=daily,
-        admin_username=session.get("admin_username") or "admin",
+        trend=trend,
     )
 
 
-@app.get("/admin/faqs")
-def admin_faqs():
-    redir = admin_required()
-    if redir:
-        return redir
+@app.get("/admin/faq")
+def admin_faq_list():
+    red = admin_required()
+    if red:
+        return red
+
+    q = (request.args.get("q") or "").strip()
 
     conn = get_connection()
     cur = conn.cursor(dictionary=True)
-    cur.execute("SELECT id, categoria, domanda, data_aggiornamento FROM faq ORDER BY id DESC")
+    if q:
+        like = f"%{q}%"
+        cur.execute(
+            "SELECT id, domanda, risposta1, risposta2, risposta3 FROM faq WHERE domanda LIKE %s OR risposta1 LIKE %s OR risposta2 LIKE %s OR risposta3 LIKE %s ORDER BY id DESC",
+            (like, like, like, like),
+        )
+    else:
+        cur.execute("SELECT id, domanda, risposta1, risposta2, risposta3 FROM faq ORDER BY id DESC")
     rows = cur.fetchall()
     cur.close()
     conn.close()
 
-    # Troncamento domanda lato server per tabella
-    for r in rows:
-        d = (r.get("domanda") or "")
-        if len(d) > 120:
-            r["domanda_short"] = d[:120] + "…"
-        else:
-            r["domanda_short"] = d
-
-    return render_template(
-        "admin_faqs.html",
-        title="Admin - FAQ",
-        rows=rows,
-        admin_username=session.get("admin_username") or "admin",
-    )
+    return render_template("admin_faq_list.html", faqs=rows, q=q)
 
 
-@app.get("/admin/faqs/new")
+@app.get("/admin/faq/new")
 def admin_faq_new():
-    redir = admin_required()
-    if redir:
-        return redir
-    return render_template(
-        "admin_faq_form.html",
-        title="Admin - Nuova FAQ",
-        heading="Nuova FAQ",
-        faq=None,
-        error=None,
-        form_action=url_for("admin_faq_new_post"),
-        admin_username=session.get("admin_username") or "admin",
-    )
+    red = admin_required()
+    if red:
+        return red
+    return render_template("admin_faq_edit.html", row=None, error=None)
 
 
-@app.post("/admin/faqs/new")
+@app.post("/admin/faq/new")
 def admin_faq_new_post():
-    redir = admin_required()
-    if redir:
-        return redir
+    red = admin_required()
+    if red:
+        return red
 
-    categoria = (request.form.get("categoria") or "generale").strip() or "generale"
     domanda = (request.form.get("domanda") or "").strip()
-    risposta1 = (request.form.get("risposta1") or "").strip() or None
-    risposta2 = (request.form.get("risposta2") or "").strip() or None
-    risposta3 = (request.form.get("risposta3") or "").strip() or None
+    r1 = (request.form.get("risposta1") or "").strip()
+    r2 = (request.form.get("risposta2") or "").strip()
+    r3 = (request.form.get("risposta3") or "").strip()
 
-    if not domanda:
-        return render_template(
-            "admin_faq_form.html",
-            title="Admin - Nuova FAQ",
-            heading="Nuova FAQ",
-            faq={"categoria": categoria, "domanda": domanda, "risposta1": risposta1 or "", "risposta2": risposta2 or "", "risposta3": risposta3 or ""},
-            error="La domanda è obbligatoria.",
-            form_action=url_for("admin_faq_new_post"),
-            admin_username=session.get("admin_username") or "admin",
-        )
+    if not domanda or not r1:
+        return render_template("admin_faq_edit.html", row=None, error="Domanda e Risposta 1 sono obbligatorie.")
 
     conn = get_connection()
     cur = conn.cursor()
     cur.execute(
-        "INSERT INTO faq (categoria, domanda, risposta1, risposta2, risposta3) VALUES (%s, %s, %s, %s, %s)",
-        (categoria, domanda, risposta1, risposta2, risposta3),
+        "INSERT INTO faq (domanda, risposta1, risposta2, risposta3) VALUES (%s, %s, %s, %s)",
+        (domanda, r1, r2 or None, r3 or None),
     )
     conn.commit()
     cur.close()
     conn.close()
 
-    return redirect(url_for("admin_faqs"))
+    return redirect(url_for("admin_faq_list"))
 
 
-@app.get("/admin/faqs/edit/<int:faq_id>")
+@app.get("/admin/faq/<int:faq_id>/edit")
 def admin_faq_edit(faq_id: int):
-    redir = admin_required()
-    if redir:
-        return redir
+    red = admin_required()
+    if red:
+        return red
 
     conn = get_connection()
     cur = conn.cursor(dictionary=True)
-    cur.execute("SELECT * FROM faq WHERE id=%s LIMIT 1", (faq_id,))
-    faq = cur.fetchone()
+    cur.execute("SELECT id, domanda, risposta1, risposta2, risposta3 FROM faq WHERE id=%s", (int(faq_id),))
+    row = cur.fetchone()
     cur.close()
     conn.close()
 
-    if not faq:
-        return redirect(url_for("admin_faqs"))
+    if not row:
+        return redirect(url_for("admin_faq_list"))
 
-    return render_template(
-        "admin_faq_form.html",
-        title=f"Admin - Modifica FAQ {faq_id}",
-        heading=f"Modifica FAQ #{faq_id}",
-        faq=faq,
-        error=None,
-        form_action=url_for("admin_faq_edit_post", faq_id=faq_id),
-        admin_username=session.get("admin_username") or "admin",
-    )
+    return render_template("admin_faq_edit.html", row=row, error=None)
 
 
-@app.post("/admin/faqs/edit/<int:faq_id>")
+@app.post("/admin/faq/<int:faq_id>/edit")
 def admin_faq_edit_post(faq_id: int):
-    redir = admin_required()
-    if redir:
-        return redir
+    red = admin_required()
+    if red:
+        return red
 
-    categoria = (request.form.get("categoria") or "generale").strip() or "generale"
     domanda = (request.form.get("domanda") or "").strip()
-    risposta1 = (request.form.get("risposta1") or "").strip() or None
-    risposta2 = (request.form.get("risposta2") or "").strip() or None
-    risposta3 = (request.form.get("risposta3") or "").strip() or None
+    r1 = (request.form.get("risposta1") or "").strip()
+    r2 = (request.form.get("risposta2") or "").strip()
+    r3 = (request.form.get("risposta3") or "").strip()
 
-    if not domanda:
+    if not domanda or not r1:
         return render_template(
-            "admin_faq_form.html",
-            title=f"Admin - Modifica FAQ {faq_id}",
-            heading=f"Modifica FAQ #{faq_id}",
-            faq={"categoria": categoria, "domanda": domanda, "risposta1": risposta1 or "", "risposta2": risposta2 or "", "risposta3": risposta3 or ""},
-            error="La domanda è obbligatoria.",
-            form_action=url_for("admin_faq_edit_post", faq_id=faq_id),
-            admin_username=session.get("admin_username") or "admin",
+            "admin_faq_edit.html",
+            row={"id": faq_id, "domanda": domanda, "risposta1": r1, "risposta2": r2, "risposta3": r3},
+            error="Domanda e Risposta 1 sono obbligatorie.",
         )
 
     conn = get_connection()
     cur = conn.cursor()
     cur.execute(
-        """
-        UPDATE faq
-        SET categoria=%s, domanda=%s, risposta1=%s, risposta2=%s, risposta3=%s
-        WHERE id=%s
-        """,
-        (categoria, domanda, risposta1, risposta2, risposta3, faq_id),
+        "UPDATE faq SET domanda=%s, risposta1=%s, risposta2=%s, risposta3=%s WHERE id=%s",
+        (domanda, r1, r2 or None, r3 or None, int(faq_id)),
     )
     conn.commit()
     cur.close()
     conn.close()
 
-    return redirect(url_for("admin_faqs"))
+    return redirect(url_for("admin_faq_list"))
 
 
-@app.post("/admin/faqs/delete/<int:faq_id>")
+@app.post("/admin/faq/<int:faq_id>/delete")
 def admin_faq_delete(faq_id: int):
-    redir = admin_required()
-    if redir:
-        return redir
+    red = admin_required()
+    if red:
+        return red
 
     conn = get_connection()
     cur = conn.cursor()
-    cur.execute("DELETE FROM faq WHERE id=%s", (faq_id,))
+    cur.execute("DELETE FROM faq WHERE id=%s", (int(faq_id),))
     conn.commit()
     cur.close()
     conn.close()
 
-    return redirect(url_for("admin_faqs"))
+    return redirect(url_for("admin_faq_list"))
 
 
+# =========================
+# Run
+# =========================
 if __name__ == "__main__":
-    app.run(host="127.0.0.1", port=5000, debug=True, use_reloader=False)
+    app.run(host="0.0.0.0", port=int(os.getenv("PORT", "5000")), debug=True)

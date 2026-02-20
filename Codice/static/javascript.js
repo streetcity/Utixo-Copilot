@@ -19,6 +19,7 @@ const sendBtn = document.getElementById("sendBtn");
 
 // Tools / conversations
 const newChatBtn = document.getElementById("newChatBtn");
+const openTicketBtn = document.getElementById("openTicketBtn");
 const conversationsPane = document.getElementById("conversationsPane");
 const conversationsList = document.getElementById("conversationsList");
 const chatLoginHint = document.getElementById("chatLoginHint");
@@ -45,6 +46,9 @@ const registerError = document.getElementById("registerError");
 
 let currentUser = null;              // {id, username}
 let currentConversationId = null;    // number | null
+
+let lastSimilarity = null;
+let lastMatchedFaqId = null;
 
 function openChat() {
   body.classList.add("chat-open");
@@ -146,6 +150,22 @@ async function apiFetchJson(url, opts = {}) {
   }
   return data;
 }
+
+
+
+// =========================
+// Ticket (WHMCS)
+// =========================
+const TICKET_URL = (window.UTIXO_TICKET_URL || "").trim();
+
+// Apri il form ticket senza pre-compilare nulla con i contenuti della chat.
+openTicketBtn?.addEventListener("click", () => {
+  if (!TICKET_URL) {
+    alert("Ticket URL non configurato.");
+    return;
+  }
+  window.open(TICKET_URL, "_blank", "noopener");
+});
 
 // =========================
 // Auth + UI
@@ -345,87 +365,103 @@ async function refreshConversations() {
 }
 
 async function loadConversation(conversationId) {
-  if (!currentUser) return;
+  if (!conversationId) return;
+  const data = await apiFetchJson(`/api/conversations/${conversationId}`, { method: "GET" });
 
   clearMessages();
-
-  const data = await apiFetchJson(`/api/conversations/${conversationId}/messages`, { method: "GET" });
-  const rows = data.messages || [];
-
-  if (rows.length === 0) {
+  const messages = data.messages || [];
+  if (messages.length === 0) {
     showGreeting();
     return;
   }
 
-  rows.forEach((r) => {
-    if (r.messaggio_utente) appendBubble(r.messaggio_utente, "user");
-    if (r.risposta_bot) appendBubble(r.risposta_bot, "bot");
+  messages.forEach((m) => {
+    const who = m.role === "user" ? "user" : "bot";
+    appendBubble(m.content || "", who);
   });
 }
 
-// Nuova chat (solo reset UI, NON crea record)
+async function createConversationIfNeeded() {
+  if (!currentUser) return null;
+
+  // Se non c'è conversazione corrente, la creiamo SOLO quando inviamo un messaggio (non quando clicchiamo "Nuova chat")
+  if (currentConversationId) return currentConversationId;
+
+  const data = await apiFetchJson("/api/conversations", {
+    method: "POST",
+    body: JSON.stringify({ title: "Nuova chat" }),
+  });
+
+  currentConversationId = data.conversation_id || null;
+  await refreshConversations();
+  return currentConversationId;
+}
+
 newChatBtn?.addEventListener("click", async () => {
+  // non creare nel DB qui: reset UI e basta
   currentConversationId = null;
   clearMessages();
   showGreeting();
+
+  // UI: deseleziona in lista
   document.querySelectorAll(".conv-item").forEach((x) => x.classList.remove("active"));
 });
 
 // =========================
 // Chat send
 // =========================
-async function sendMessage(message) {
-  if (!message || !message.trim()) return;
+async function sendMessage(text) {
+  const msg = (text || "").trim();
+  if (!msg) return;
 
-  appendBubble(message, "user");
-  if (inputEl) inputEl.value = "";
+  appendBubble(msg, "user");
+  inputEl && (inputEl.value = "");
 
-  const typing = appendBubble("Sto scrivendo…", "bot", "meta");
-
-  sendBtn && (sendBtn.disabled = true);
-  inputEl && (inputEl.disabled = true);
+  // show typing bubble
+  const typing = appendBubble("…", "bot", "typing");
 
   try {
-    const payload = { message: message };
-    if (currentUser) {
-      payload.conversation_id = currentConversationId; // null => backend crea al primo msg
+    let convoId = currentConversationId;
+
+    // se loggato, crea conversazione SOLO al primo invio
+    if (currentUser && !convoId) {
+      convoId = await createConversationIfNeeded();
     }
 
-    // ✅ FIX: endpoint corretto è /chat (non /message)
-    const data = await apiFetchJson("/chat", {
+    const payload = {
+      question: msg,
+      conversation_id: convoId || null,
+    };
+
+    const data = await apiFetchJson("/ask", {
       method: "POST",
       body: JSON.stringify(payload),
     });
 
-    typing && typing.remove();
-    appendBubble(data.reply ?? "Nessuna risposta dal server.", "bot");
+    lastSimilarity = data.similarity ?? null;
+    lastMatchedFaqId = data.faq_matched_id ?? null;
 
-    if (currentUser) {
-      if (data.conversation_id && !currentConversationId) {
-        currentConversationId = Number(data.conversation_id);
-      }
+    typing && typing.remove();
+    appendBubble(data.reply || "Nessuna risposta.", "bot");
+
+    // se per qualche motivo il backend assegna un conversation_id (es. prima chat), prendilo
+    if (!currentConversationId && data.conversation_id) {
+      currentConversationId = Number(data.conversation_id);
       await refreshConversations();
 
-      if (currentConversationId) {
-        document.querySelectorAll(".conv-item").forEach((x) => {
-          x.classList.toggle("active", String(x.dataset.conversationId) === String(currentConversationId));
-        });
-      }
+      // seleziona la conversazione appena creata
+      const btn = conversationsList?.querySelector(`[data-conversation-id="${currentConversationId}"]`);
+      btn?.classList.add("active");
     }
   } catch (err) {
     typing && typing.remove();
-    if (err?.status === 404) {
-      appendBubble("Endpoint non trovato (404). Controlla che il backend esponga /chat.", "bot");
-    } else {
-      appendBubble("Errore di connessione al server. Riprova tra poco.", "bot");
-    }
-    console.error(err);
-  } finally {
-    sendBtn && (sendBtn.disabled = false);
-    inputEl && (inputEl.disabled = false);
-    inputEl && inputEl.focus();
+    appendBubble(`Errore: ${err.message || "impossibile inviare."}`, "bot");
   }
 }
+
+sendBtn?.addEventListener("click", () => {
+  sendMessage(inputEl ? inputEl.value : "");
+});
 
 chatForm?.addEventListener("submit", (e) => {
   e.preventDefault();

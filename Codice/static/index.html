@@ -206,6 +206,7 @@
         <div class="chat-drawer-body">
             <div class="chat-tools">
                 <button id="newChatBtn" class="chip-button" type="button">Nuova chat</button>
+                <button id="openTicketBtn" class="chip-button chip-secondary" type="button" title="Apri un ticket Utixo">Apri ticket</button>
                 <span id="chatLoginHint" class="chat-hint">Accedi per salvare e rivedere le chat.</span>
             </div>
 
@@ -275,6 +276,10 @@
             </form>
         </div>
     </div>
+
+    <script>
+      window.UTIXO_TICKET_URL = "https://shop.serverweb.net/submitticket.php?step=2&deptid=2";
+    </script>
 
     <script src="/static/javascript.js" defer></script>
 </body>
