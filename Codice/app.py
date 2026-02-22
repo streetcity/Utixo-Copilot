@@ -8,18 +8,16 @@ import json
 import urllib.request
 import urllib.error
 
-from datetime import timedelta
-from typing import Dict, Optional, Tuple, Any
+from datetime import timedelta, datetime, date
+from typing import Optional, Dict, Any, List
 
 import mysql.connector
-from mysql.connector import Error as MySQLError
 from dotenv import load_dotenv
 from flask import (
     Flask,
     jsonify,
     redirect,
     render_template,
-    render_template_string,
     request,
     send_from_directory,
     session,
@@ -52,7 +50,10 @@ DB_PORT = int(os.getenv("DB_PORT", "3306"))
 SIM_THRESHOLD = float(os.getenv("SIM_THRESHOLD", "0.25"))
 
 # Ticket URL (WHMCS)
-TICKET_URL = os.getenv("TICKET_URL", "https://shop.serverweb.net/submitticket.php?step=2&deptid=2")
+TICKET_URL = os.getenv(
+    "TICKET_URL",
+    "https://shop.serverweb.net/submitticket.php?step=2&deptid=2",
+)
 
 # Humanize replies via OpenAI (optional)
 HUMANIZE_ENABLED = (os.getenv("HUMANIZE_ENABLED", "1").strip() == "1")
@@ -64,12 +65,18 @@ OPENAI_TIMEOUT_SEC = int(os.getenv("OPENAI_TIMEOUT_SEC", "12"))
 # Admin hard-allowlist (username). Default: admin
 ADMIN_USERS = {u.strip() for u in (os.getenv("ADMIN_USERS", "admin") or "admin").split(",") if u.strip()}
 
+
 # =========================
 # DB helpers
 # =========================
+
 def get_connection():
     return mysql.connector.connect(
-        host=DB_HOST, user=DB_USER, password=DB_PASSWORD, database=DB_NAME, port=DB_PORT
+        host=DB_HOST,
+        user=DB_USER,
+        password=DB_PASSWORD,
+        database=DB_NAME,
+        port=DB_PORT,
     )
 
 
@@ -89,14 +96,34 @@ def table_has_column(conn, table: str, column: str) -> bool:
 
 
 # =========================
+# JSON helpers
+# =========================
+
+def _dt_to_str(v: Any) -> Any:
+    if isinstance(v, datetime):
+        # MySQL timestamp/datetime -> "YYYY-MM-DD HH:MM:SS"
+        return v.strftime("%Y-%m-%d %H:%M:%S")
+    if isinstance(v, date):
+        return v.strftime("%Y-%m-%d")
+    return v
+
+
+def _normalize_rows(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    out: List[Dict[str, Any]] = []
+    for r in rows or []:
+        rr = {k: _dt_to_str(v) for k, v in (r or {}).items()}
+        out.append(rr)
+    return out
+
+
+# =========================
 # Text helpers
 # =========================
+
 def _extract_output_text_from_openai_response(payload: dict) -> str:
-    # Prefer the aggregated field if present
     if isinstance(payload, dict) and isinstance(payload.get("output_text"), str) and payload["output_text"].strip():
         return payload["output_text"].strip()
 
-    # Fallback: walk output items
     out = payload.get("output")
     if not isinstance(out, list):
         return ""
@@ -110,7 +137,6 @@ def _extract_output_text_from_openai_response(payload: dict) -> str:
         for c in content:
             if not isinstance(c, dict):
                 continue
-            # Most common: {"type":"output_text","text":"..."}
             t = c.get("type")
             if t in ("output_text", "text") and isinstance(c.get("text"), str):
                 parts.append(c["text"])
@@ -118,13 +144,12 @@ def _extract_output_text_from_openai_response(payload: dict) -> str:
 
 
 def humanize_answer(user_question: str, skeleton_answer: str) -> str:
-    """Rende la risposta più naturale SENZA aggiungere nuove informazioni.
+    """Riscrive la risposta rendendola più naturale SENZA aggiungere nuove info.
     Se OPENAI_API_KEY non è impostata o HUMANIZE_ENABLED=0 -> ritorna skeleton_answer.
     """
     if not HUMANIZE_ENABLED or not OPENAI_API_KEY:
         return skeleton_answer
 
-    # Guardrails: niente prompt injection dall'utente
     instructions = (
         "Sei Utixo Copilot, assistente tecnico di Utixo. "
         "Il tuo compito è RISCRIVERE una risposta esistente rendendola più umana, chiara e ben formattata.\n\n"
@@ -169,7 +194,6 @@ def humanize_answer(user_question: str, skeleton_answer: str) -> str:
             out_text = _extract_output_text_from_openai_response(payload)
             return out_text if out_text else skeleton_answer
     except Exception:
-        # In caso di qualunque errore, non blocchiamo la chat
         return skeleton_answer
 
 
@@ -183,11 +207,12 @@ def clean_text(text: str) -> str:
 # =========================
 # Auth helpers
 # =========================
-def current_user():
+
+def current_user() -> Optional[Dict[str, Any]]:
     uid = session.get("user_id")
     uname = session.get("username")
     if uid and uname:
-        return {"id": uid, "username": uname}
+        return {"id": int(uid), "username": uname}
     return None
 
 
@@ -205,6 +230,7 @@ def clear_user_session():
 # =========================
 # Password helpers (upgrade legacy hashes)
 # =========================
+
 def is_sha256_hex(s: str) -> bool:
     return bool(re.fullmatch(r"[0-9a-fA-F]{64}", (s or "").strip()))
 
@@ -214,24 +240,20 @@ def sha256_hex(password: str) -> str:
 
 
 def check_password_and_upgrade(conn, user_id: int, password_plain: str, stored_hash: str) -> bool:
-    """
-    Supporta:
+    """Supporta:
     - legacy: SHA256 hexdigest
     - nuovo: werkzeug (pbkdf2:sha256, scrypt, etc)
     """
     try:
         from werkzeug.security import check_password_hash, generate_password_hash
     except Exception:
-        # Se werkzeug non disponibile, fallback solo sha256
         return sha256_hex(password_plain) == (stored_hash or "")
 
     stored_hash = (stored_hash or "").strip()
 
-    # Legacy sha256
     if is_sha256_hex(stored_hash):
         ok = sha256_hex(password_plain) == stored_hash.lower()
         if ok:
-            # upgrade hash
             new_hash = generate_password_hash(password_plain)
             cur = conn.cursor()
             cur.execute("UPDATE utenti SET password=%s WHERE id=%s", (new_hash, int(user_id)))
@@ -239,7 +261,6 @@ def check_password_and_upgrade(conn, user_id: int, password_plain: str, stored_h
             cur.close()
         return ok
 
-    # Werkzeug hash
     return check_password_hash(stored_hash, password_plain)
 
 
@@ -254,23 +275,39 @@ def hash_password_new(password_plain: str) -> str:
 # =========================
 # Static routes
 # =========================
+
 @app.get("/")
 def home():
     return send_from_directory(STATIC_DIR, "index.html")
 
 
 @app.get("/static/<path:filename>")
-def static_files(filename):
+def static_files(filename: str):
     return send_from_directory(STATIC_DIR, filename)
+
+
+@app.get("/favicon.ico")
+def favicon():
+    # opzionale: metti un favicon.ico in static/
+    try:
+        return send_from_directory(STATIC_DIR, "favicon.ico")
+    except Exception:
+        return ("", 204)
 
 
 # =========================
 # Auth endpoints
 # =========================
+
 @app.get("/me")
 def me():
-    user = current_user()
-    return jsonify({"user": user})
+    return jsonify({"user": current_user()})
+
+
+@app.get("/auth/me")
+def auth_me_alias():
+    # alias richiesto dal frontend
+    return me()
 
 
 @app.post("/auth/register")
@@ -298,7 +335,7 @@ def register():
         (username, pw_hash, email or None),
     )
     conn.commit()
-    user_id = cur2.lastrowid
+    user_id = int(cur2.lastrowid)
     cur2.close()
     cur.close()
     conn.close()
@@ -339,6 +376,7 @@ def login():
 @app.post("/auth/logout")
 def logout():
     clear_user_session()
+    # se eri anche admin, butta fuori
     session.pop("admin_user_id", None)
     session.pop("admin_username", None)
     return jsonify({"ok": True})
@@ -347,11 +385,12 @@ def logout():
 # =========================
 # Conversations helpers
 # =========================
+
 def create_conversation(conn, user_id: int, title: str) -> int:
     cur = conn.cursor()
     cur.execute(
         "INSERT INTO conversations (user_id, title, created_at, updated_at) VALUES (%s, %s, NOW(), NOW())",
-        (int(user_id), title),
+        (int(user_id), title or "Nuova chat"),
     )
     conn.commit()
     cid = int(cur.lastrowid)
@@ -361,7 +400,10 @@ def create_conversation(conn, user_id: int, title: str) -> int:
 
 def ensure_conversation_belongs(conn, conversation_id: int, user_id: int) -> bool:
     cur = conn.cursor()
-    cur.execute("SELECT id FROM conversations WHERE id=%s AND user_id=%s LIMIT 1", (int(conversation_id), int(user_id)))
+    cur.execute(
+        "SELECT id FROM conversations WHERE id=%s AND user_id=%s LIMIT 1",
+        (int(conversation_id), int(user_id)),
+    )
     ok = cur.fetchone() is not None
     cur.close()
     return bool(ok)
@@ -374,66 +416,200 @@ def touch_conversation(conn, conversation_id: int):
     cur.close()
 
 
-# =========================
-# Conversations API
-# =========================
-@app.get("/conversations")
-def list_conversations():
-    user = current_user()
-    if not user:
-        return jsonify({"ok": True, "conversations": []})
+def set_conversation_title(conn, conversation_id: int, user_id: int, title: str) -> bool:
+    """Aggiorna il titolo della conversazione se appartiene all'utente."""
+    title = (title or "").strip()[:120]
+    if not title:
+        return False
 
+    if not ensure_conversation_belongs(conn, int(conversation_id), int(user_id)):
+        return False
+
+    cur = conn.cursor()
+    cur.execute(
+        "UPDATE conversations SET title=%s, updated_at=NOW() WHERE id=%s AND user_id=%s",
+        (title, int(conversation_id), int(user_id)),
+    )
+    conn.commit()
+    cur.close()
+    return True
+
+
+# =========================
+# Conversations API (legacy + new)
+# =========================
+
+def _list_conversations_for_user(user_id: int) -> List[Dict[str, Any]]:
     conn = get_connection()
     cur = conn.cursor(dictionary=True)
     cur.execute(
         "SELECT id, title, created_at, updated_at FROM conversations WHERE user_id=%s ORDER BY updated_at DESC",
-        (int(user["id"]),),
+        (int(user_id),),
     )
-    rows = cur.fetchall()
+    rows = cur.fetchall() or []
     cur.close()
     conn.close()
-    return jsonify({"ok": True, "conversations": rows})
+    return _normalize_rows(rows)
+
+
+def _get_conversation(user_id: int, conversation_id: int) -> Optional[Dict[str, Any]]:
+    conn = get_connection()
+    cur = conn.cursor(dictionary=True)
+    cur.execute(
+        "SELECT id, user_id, title, created_at, updated_at FROM conversations WHERE id=%s AND user_id=%s LIMIT 1",
+        (int(conversation_id), int(user_id)),
+    )
+    row = cur.fetchone()
+    cur.close()
+    conn.close()
+    if not row:
+        return None
+    return {k: _dt_to_str(v) for k, v in row.items()}
+
+
+def _get_messages(user_id: int, conversation_id: int) -> List[Dict[str, Any]]:
+    conn = get_connection()
+
+    if not ensure_conversation_belongs(conn, int(conversation_id), int(user_id)):
+        conn.close()
+        raise PermissionError("forbidden")
+
+    cur = conn.cursor(dictionary=True)
+    # schema reale: logs.messaggio_utente, risposta_bot, data_ora
+    cur.execute(
+        """
+        SELECT messaggio_utente, risposta_bot, data_ora, similarity, faq_id, resolved
+        FROM logs
+        WHERE conversation_id=%s AND user_id=%s
+        ORDER BY id ASC
+        """,
+        (int(conversation_id), int(user_id)),
+    )
+    rows = cur.fetchall() or []
+    cur.close()
+    conn.close()
+
+    # Frontend si aspetta una lista di messaggi con {role, content, created_at}
+    messages: List[Dict[str, Any]] = []
+    for r in rows:
+        r = {k: _dt_to_str(v) for k, v in (r or {}).items()}
+        ts = r.get("data_ora")
+
+        user_txt = (r.get("messaggio_utente") or "").strip()
+        if user_txt:
+            messages.append({"role": "user", "content": user_txt, "created_at": ts})
+
+        bot_txt = (r.get("risposta_bot") or "").strip()
+        if bot_txt:
+            messages.append({"role": "assistant", "content": bot_txt, "created_at": ts})
+
+    return messages
+
+
+# --- LEGACY endpoints (vecchio frontend) ---
+@app.get("/conversations")
+def list_conversations_legacy():
+    user = current_user()
+    if not user:
+        return jsonify({"ok": True, "conversations": []})
+    return jsonify({"ok": True, "conversations": _list_conversations_for_user(int(user["id"]))})
 
 
 @app.get("/conversations/<int:conversation_id>/messages")
-def conversation_messages(conversation_id: int):
+def conversation_messages_legacy(conversation_id: int):
     user = current_user()
     if not user:
         return jsonify({"ok": False, "error": "Non autorizzato"}), 401
 
-    conn = get_connection()
-    if not ensure_conversation_belongs(conn, conversation_id, int(user["id"])):
-        conn.close()
+    try:
+        rows = _get_messages(int(user["id"]), int(conversation_id))
+    except PermissionError:
         return jsonify({"ok": False, "error": "Non autorizzato"}), 403
 
-    cur = conn.cursor(dictionary=True)
-    # Se esiste conversation_id nella tabella logs, filtra. Altrimenti (vecchi DB) ritorna vuoto
-    if table_has_column(conn, "logs", "conversation_id"):
-        cur.execute(
-            """
-            SELECT user_msg, reply, created_at
-            FROM logs
-            WHERE conversation_id=%s AND user_id=%s
-            ORDER BY id ASC
-            """,
-            (int(conversation_id), int(user["id"])),
-        )
-        rows = cur.fetchall()
-    else:
-        rows = []
-
-    cur.close()
-    conn.close()
     return jsonify({"ok": True, "messages": rows})
+
+
+# --- NEW endpoints (frontend attuale) ---
+@app.get("/api/conversations")
+def api_list_conversations():
+    user = current_user()
+    if not user:
+        return jsonify({"ok": True, "conversations": []})
+    return jsonify({"ok": True, "conversations": _list_conversations_for_user(int(user["id"]))})
+
+
+@app.post("/api/conversations")
+def api_create_conversation():
+    user = current_user()
+    if not user:
+        return jsonify({"ok": False, "error": "Non autorizzato"}), 401
+
+    data = request.get_json(silent=True) or {}
+    title = (data.get("title") or "Nuova chat").strip()[:120]
+
+    conn = get_connection()
+    cid = create_conversation(conn, int(user["id"]), title or "Nuova chat")
+    conn.close()
+
+    conv = _get_conversation(int(user["id"]), cid)
+    return jsonify({"ok": True, "conversation_id": cid, "conversation": conv})
+
+
+@app.get("/api/conversations/<int:conversation_id>")
+def api_get_conversation(conversation_id: int):
+    user = current_user()
+    if not user:
+        return jsonify({"ok": False, "error": "Non autorizzato"}), 401
+
+    conv = _get_conversation(int(user["id"]), int(conversation_id))
+    if not conv:
+        return jsonify({"ok": False, "error": "Not found"}), 404
+
+    # compatibilità frontend: alcuni client si aspettano anche i messaggi qui
+    try:
+        rows = _get_messages(int(user["id"]), int(conversation_id))
+    except PermissionError:
+        return jsonify({"ok": False, "error": "Non autorizzato"}), 403
+
+    return jsonify({"ok": True, "conversation": conv, "messages": rows})
+@app.get("/api/conversations/<int:conversation_id>/messages")
+def api_get_messages(conversation_id: int):
+    user = current_user()
+    if not user:
+        return jsonify({"ok": False, "error": "Non autorizzato"}), 401
+
+    try:
+        rows = _get_messages(int(user["id"]), int(conversation_id))
+    except PermissionError:
+        return jsonify({"ok": False, "error": "Non autorizzato"}), 403
+
+    return jsonify({"ok": True, "messages": rows})
+
+
+@app.post("/api/conversations/<int:conversation_id>/messages")
+def api_post_message(conversation_id: int):
+    """Compatibilità per frontend che manda i messaggi qui invece che su /chat."""
+    user = current_user()
+    if not user:
+        return jsonify({"ok": False, "error": "Non autorizzato"}), 401
+
+    data = request.get_json(silent=True) or {}
+    msg = (data.get("message") or "").strip()
+    if not msg:
+        return jsonify({"ok": False, "error": "Messaggio vuoto"}), 400
+
+    # riusa la stessa logica di /chat
+    return _handle_chat(msg, int(user["id"]), int(conversation_id))
 
 
 # =========================
 # Logging
 # =========================
+
 def insert_log_message(
     user_msg: str,
     reply: str,
-    best_score: float,
+    similarity: float,
     matched_id: Optional[int],
     user_id: Optional[int],
     conversation_id: Optional[int],
@@ -441,40 +617,22 @@ def insert_log_message(
     try:
         conn = get_connection()
         cur = conn.cursor()
-        has_conv = table_has_column(conn, "logs", "conversation_id")
-
-        if has_conv:
-            cur.execute(
-                """
-                INSERT INTO logs (user_msg, reply, best_score, faq_matched_id, user_id, conversation_id, resolved, created_at)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, NOW())
-                """,
-                (
-                    user_msg,
-                    reply,
-                    float(best_score),
-                    matched_id,
-                    user_id,
-                    conversation_id,
-                    "no",
-                ),
-            )
-        else:
-            cur.execute(
-                """
-                INSERT INTO logs (user_msg, reply, best_score, faq_matched_id, user_id, resolved, created_at)
-                VALUES (%s, %s, %s, %s, %s, %s, NOW())
-                """,
-                (
-                    user_msg,
-                    reply,
-                    float(best_score),
-                    matched_id,
-                    user_id,
-                    "no",
-                ),
-            )
-
+        resolved = 1 if (matched_id is not None and float(similarity) >= SIM_THRESHOLD) else 0
+        cur.execute(
+            """
+            INSERT INTO logs (user_id, conversation_id, messaggio_utente, risposta_bot, similarity, faq_id, resolved)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
+            """,
+            (
+                int(user_id) if user_id is not None else None,
+                int(conversation_id) if conversation_id is not None else None,
+                user_msg,
+                reply,
+                float(similarity),
+                int(matched_id) if matched_id is not None else None,
+                int(resolved),
+            ),
+        )
         conn.commit()
         cur.close()
         conn.close()
@@ -483,27 +641,21 @@ def insert_log_message(
 
 
 # =========================
-# Chat endpoint
+# Chat core
 # =========================
-@app.post("/chat")
-def chat():
-    data = request.get_json(silent=True) or {}
-    user_msg = (data.get("message") or "").strip()
-    conversation_id = data.get("conversation_id")
 
-    user = current_user()
-    user_id = int(user["id"]) if user else None
+def _handle_chat(user_msg: str, user_id: Optional[int], conversation_id: Optional[int]):
+    user_msg = (user_msg or "").strip()
 
     if not user_msg:
-        return jsonify({"reply": "Scrivi un messaggio valido.", "faq_matched_id": None, "conversation_id": conversation_id})
+        return jsonify({"ok": True, "reply": "Scrivi un messaggio valido.", "faq_matched_id": None, "conversation_id": conversation_id})
 
     # Se loggato e non c'è conversation_id -> creane una nuova
     if user_id and not conversation_id:
         try:
             conn = get_connection()
-            # titolo dalla prima frase
             title = user_msg[:60].strip() or "Nuova chat"
-            conversation_id = create_conversation(conn, user_id, title)
+            conversation_id = create_conversation(conn, int(user_id), title)
             conn.close()
         except Exception:
             conversation_id = None
@@ -512,7 +664,7 @@ def chat():
     if user_id and conversation_id:
         try:
             conn = get_connection()
-            ok = ensure_conversation_belongs(conn, int(conversation_id), user_id)
+            ok = ensure_conversation_belongs(conn, int(conversation_id), int(user_id))
             conn.close()
             if not ok:
                 conversation_id = None
@@ -523,18 +675,18 @@ def chat():
     conn = get_connection()
     cur = conn.cursor(dictionary=True)
     cur.execute("SELECT id, domanda, risposta1, risposta2, risposta3 FROM faq")
-    faqs = cur.fetchall()
+    faqs = cur.fetchall() or []
     cur.close()
     conn.close()
 
     if not faqs:
-        return jsonify({"reply": "Al momento non ho contenuti disponibili.", "faq_matched_id": None, "conversation_id": conversation_id})
+        return jsonify({"ok": True, "reply": "Al momento non ho contenuti disponibili.", "faq_matched_id": None, "conversation_id": conversation_id})
 
-    domande_pulite = [clean_text(row["domanda"]) for row in faqs]
+    domande_pulite = [clean_text(row.get("domanda") or "") for row in faqs]
     user_clean = clean_text(user_msg)
 
     if user_clean == "":
-        return jsonify({"reply": "Puoi riformulare con più dettagli?", "faq_matched_id": None, "conversation_id": conversation_id})
+        return jsonify({"ok": True, "reply": "Puoi riformulare con più dettagli?", "faq_matched_id": None, "conversation_id": conversation_id})
 
     vectorizer = TfidfVectorizer()
     X = vectorizer.fit_transform(domande_pulite + [user_clean])
@@ -543,21 +695,20 @@ def chat():
     best_index = int(sim.argmax())
     best_score = float(sim[best_index])
 
-    matched_id = None
+    matched_id: Optional[int] = None
     reply = "Non ho trovato una risposta precisa."
 
     if best_score >= SIM_THRESHOLD:
         best_row = faqs[best_index]
         risposte = [r for r in (best_row.get("risposta1"), best_row.get("risposta2"), best_row.get("risposta3")) if r]
         reply = random.choice(risposte) if risposte else "Non ho una risposta precisa."
-        matched_id = best_row["id"]
-        # Riscrittura "più umana" mantenendo lo scheletro (se abilitata)
+        matched_id = int(best_row["id"])
         reply = humanize_answer(user_msg, reply)
 
     insert_log_message(
         user_msg=user_msg,
         reply=reply,
-        best_score=best_score,
+        similarity=best_score,
         matched_id=matched_id,
         user_id=user_id,
         conversation_id=conversation_id,
@@ -566,13 +717,32 @@ def chat():
     if user_id and conversation_id:
         try:
             conn = get_connection()
-            touch_conversation(conn, conversation_id)
+
+            # Se la conversazione è stata creata dal frontend con titolo "Nuova chat",
+            # al primo messaggio la rinominiamo con l'incipit della chat.
+            try:
+                cur = conn.cursor(dictionary=True)
+                cur.execute(
+                    "SELECT title FROM conversations WHERE id=%s AND user_id=%s LIMIT 1",
+                    (int(conversation_id), int(user_id)),
+                )
+                row = cur.fetchone() or {}
+                cur.close()
+                current_title = (row.get("title") or "").strip().lower()
+                if current_title in ("", "nuova chat", "new chat"):
+                    new_title = user_msg[:60].strip() or "Nuova chat"
+                    set_conversation_title(conn, int(conversation_id), int(user_id), new_title)
+            except Exception:
+                pass
+
+            touch_conversation(conn, int(conversation_id))
             conn.close()
         except Exception:
             pass
 
     return jsonify(
         {
+            "ok": True,
             "reply": reply,
             "faq_matched_id": matched_id,
             "similarity": round(best_score, 3),
@@ -583,8 +753,37 @@ def chat():
 
 
 # =========================
+# Chat endpoints
+# =========================
+
+@app.post("/chat")
+def chat():
+    data = request.get_json(silent=True) or {}
+    # compatibilità: alcuni frontend inviano 'question' invece di 'message'
+    user_msg = (data.get("message") or data.get("question") or "").strip()
+    conversation_id = data.get("conversation_id")
+
+    user = current_user()
+    user_id = int(user["id"]) if user else None
+
+    # conversation_id può arrivare come stringa
+    try:
+        conversation_id = int(conversation_id) if conversation_id not in (None, "", 0, "0") else None
+    except Exception:
+        conversation_id = None
+
+    return _handle_chat(user_msg, user_id, conversation_id)
+
+@app.post("/ask")
+def ask_alias():
+    # alias per vecchi frontend
+    return chat()
+
+
+# =========================
 # Admin UI (templates)
 # =========================
+
 @app.get("/admin/login")
 def admin_login():
     if session.get("admin_user_id"):
@@ -600,7 +799,7 @@ def admin_login_post():
     if not username or not password:
         return render_template("admin_login.html", error="Inserisci username e password.")
 
-    # Admin consentiti solo in allowlist (env ADMIN_USERS, default: admin)
+    # Admin consentiti solo in allowlist
     if username not in ADMIN_USERS:
         return render_template("admin_login.html", error="Utente non autorizzato.")
 
@@ -644,7 +843,6 @@ def admin_dashboard():
     if red:
         return red
 
-    # stats
     conn = get_connection()
     cur = conn.cursor(dictionary=True)
 
@@ -654,122 +852,85 @@ def admin_dashboard():
     cur.execute("SELECT COUNT(*) AS n FROM logs")
     log_count = int((cur.fetchone() or {}).get("n", 0))
 
-    cur.execute("SELECT COUNT(*) AS n FROM logs WHERE resolved='si'")
-    resolved_yes = int((cur.fetchone() or {}).get("n", 0))
+    # schema: resolved tinyint(1)
+    cur.execute("SELECT COUNT(*) AS n FROM logs WHERE resolved=1")
+    resolved_ok = int((cur.fetchone() or {}).get("n", 0))
 
-    cur.execute("SELECT COUNT(*) AS n FROM logs WHERE resolved='no'")
+    cur.execute("SELECT COUNT(*) AS n FROM logs WHERE resolved=0")
     resolved_no = int((cur.fetchone() or {}).get("n", 0))
 
-    # last 7 days trend
+    # ultimi 14 giorni: group by data_ora
     cur.execute(
         """
-        SELECT DATE(created_at) AS d, COUNT(*) AS n
+        SELECT DATE(data_ora) AS d, COUNT(*) AS c
         FROM logs
-        WHERE created_at >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)
-        GROUP BY DATE(created_at)
+        WHERE data_ora >= DATE_SUB(CURDATE(), INTERVAL 14 DAY)
+        GROUP BY DATE(data_ora)
         ORDER BY d ASC
         """
     )
-    trend = cur.fetchall()
+    daily = _normalize_rows(cur.fetchall() or [])
 
     cur.close()
     conn.close()
 
     return render_template(
         "admin_dashboard.html",
+        admin_username=session.get("admin_username") or "admin",
         faq_count=faq_count,
         log_count=log_count,
-        resolved_yes=resolved_yes,
+        resolved_ok=resolved_ok,
         resolved_no=resolved_no,
-        trend=trend,
+        daily=daily,
     )
 
 
-@app.get("/admin/faq")
-def admin_faq_list():
+@app.get("/admin/faqs")
+def admin_faqs():
     red = admin_required()
     if red:
         return red
 
-    q = (request.args.get("q") or "").strip()
-
     conn = get_connection()
     cur = conn.cursor(dictionary=True)
-    if q:
-        like = f"%{q}%"
-        cur.execute(
-            "SELECT id, domanda, risposta1, risposta2, risposta3 FROM faq WHERE domanda LIKE %s OR risposta1 LIKE %s OR risposta2 LIKE %s OR risposta3 LIKE %s ORDER BY id DESC",
-            (like, like, like, like),
-        )
-    else:
-        cur.execute("SELECT id, domanda, risposta1, risposta2, risposta3 FROM faq ORDER BY id DESC")
-    rows = cur.fetchall()
+    cur.execute(
+        "SELECT id, categoria, domanda, data_aggiornamento FROM faq ORDER BY id DESC"
+    )
+    rows = cur.fetchall() or []
     cur.close()
     conn.close()
 
-    return render_template("admin_faq_list.html", faqs=rows, q=q)
+    # aggiungi domanda_short per template
+    for r in rows:
+        d = (r.get("domanda") or "").strip()
+        r["domanda_short"] = (d[:90] + "…") if len(d) > 90 else d
+        r["data_aggiornamento"] = _dt_to_str(r.get("data_aggiornamento"))
+
+    return render_template("admin_faqs.html", rows=rows)
 
 
-@app.get("/admin/faq/new")
+@app.get("/admin/faqs/new")
 def admin_faq_new():
     red = admin_required()
     if red:
         return red
-    return render_template("admin_faq_edit.html", row=None, error=None)
+
+    return render_template(
+        "admin_faq_form.html",
+        heading="Nuova FAQ",
+        form_action="/admin/faqs/new",
+        faq=None,
+        error=None,
+    )
 
 
-@app.post("/admin/faq/new")
+@app.post("/admin/faqs/new")
 def admin_faq_new_post():
     red = admin_required()
     if red:
         return red
 
-    domanda = (request.form.get("domanda") or "").strip()
-    r1 = (request.form.get("risposta1") or "").strip()
-    r2 = (request.form.get("risposta2") or "").strip()
-    r3 = (request.form.get("risposta3") or "").strip()
-
-    if not domanda or not r1:
-        return render_template("admin_faq_edit.html", row=None, error="Domanda e Risposta 1 sono obbligatorie.")
-
-    conn = get_connection()
-    cur = conn.cursor()
-    cur.execute(
-        "INSERT INTO faq (domanda, risposta1, risposta2, risposta3) VALUES (%s, %s, %s, %s)",
-        (domanda, r1, r2 or None, r3 or None),
-    )
-    conn.commit()
-    cur.close()
-    conn.close()
-
-    return redirect(url_for("admin_faq_list"))
-
-
-@app.get("/admin/faq/<int:faq_id>/edit")
-def admin_faq_edit(faq_id: int):
-    red = admin_required()
-    if red:
-        return red
-
-    conn = get_connection()
-    cur = conn.cursor(dictionary=True)
-    cur.execute("SELECT id, domanda, risposta1, risposta2, risposta3 FROM faq WHERE id=%s", (int(faq_id),))
-    row = cur.fetchone()
-    cur.close()
-    conn.close()
-
-    if not row:
-        return redirect(url_for("admin_faq_list"))
-
-    return render_template("admin_faq_edit.html", row=row, error=None)
-
-
-@app.post("/admin/faq/<int:faq_id>/edit")
-def admin_faq_edit_post(faq_id: int):
-    red = admin_required()
-    if red:
-        return red
-
+    categoria = (request.form.get("categoria") or "generale").strip()[:100] or "generale"
     domanda = (request.form.get("domanda") or "").strip()
     r1 = (request.form.get("risposta1") or "").strip()
     r2 = (request.form.get("risposta2") or "").strip()
@@ -777,25 +938,93 @@ def admin_faq_edit_post(faq_id: int):
 
     if not domanda or not r1:
         return render_template(
-            "admin_faq_edit.html",
-            row={"id": faq_id, "domanda": domanda, "risposta1": r1, "risposta2": r2, "risposta3": r3},
+            "admin_faq_form.html",
+            heading="Nuova FAQ",
+            form_action="/admin/faqs/new",
+            faq={"categoria": categoria, "domanda": domanda, "risposta1": r1, "risposta2": r2, "risposta3": r3},
             error="Domanda e Risposta 1 sono obbligatorie.",
         )
 
     conn = get_connection()
     cur = conn.cursor()
     cur.execute(
-        "UPDATE faq SET domanda=%s, risposta1=%s, risposta2=%s, risposta3=%s WHERE id=%s",
-        (domanda, r1, r2 or None, r3 or None, int(faq_id)),
+        "INSERT INTO faq (categoria, domanda, risposta1, risposta2, risposta3) VALUES (%s, %s, %s, %s, %s)",
+        (categoria, domanda, r1, r2 or None, r3 or None),
     )
     conn.commit()
     cur.close()
     conn.close()
 
-    return redirect(url_for("admin_faq_list"))
+    return redirect("/admin/faqs")
 
 
-@app.post("/admin/faq/<int:faq_id>/delete")
+@app.get("/admin/faqs/edit/<int:faq_id>")
+def admin_faq_edit(faq_id: int):
+    red = admin_required()
+    if red:
+        return red
+
+    conn = get_connection()
+    cur = conn.cursor(dictionary=True)
+    cur.execute(
+        "SELECT id, categoria, domanda, risposta1, risposta2, risposta3 FROM faq WHERE id=%s",
+        (int(faq_id),),
+    )
+    faq = cur.fetchone()
+    cur.close()
+    conn.close()
+
+    if not faq:
+        return redirect("/admin/faqs")
+
+    return render_template(
+        "admin_faq_form.html",
+        heading=f"Modifica FAQ #{faq_id}",
+        form_action=f"/admin/faqs/edit/{faq_id}",
+        faq=faq,
+        error=None,
+    )
+
+
+@app.post("/admin/faqs/edit/<int:faq_id>")
+def admin_faq_edit_post(faq_id: int):
+    red = admin_required()
+    if red:
+        return red
+
+    categoria = (request.form.get("categoria") or "generale").strip()[:100] or "generale"
+    domanda = (request.form.get("domanda") or "").strip()
+    r1 = (request.form.get("risposta1") or "").strip()
+    r2 = (request.form.get("risposta2") or "").strip()
+    r3 = (request.form.get("risposta3") or "").strip()
+
+    if not domanda or not r1:
+        return render_template(
+            "admin_faq_form.html",
+            heading=f"Modifica FAQ #{faq_id}",
+            form_action=f"/admin/faqs/edit/{faq_id}",
+            faq={"id": faq_id, "categoria": categoria, "domanda": domanda, "risposta1": r1, "risposta2": r2, "risposta3": r3},
+            error="Domanda e Risposta 1 sono obbligatorie.",
+        )
+
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute(
+        """
+        UPDATE faq
+        SET categoria=%s, domanda=%s, risposta1=%s, risposta2=%s, risposta3=%s
+        WHERE id=%s
+        """,
+        (categoria, domanda, r1, r2 or None, r3 or None, int(faq_id)),
+    )
+    conn.commit()
+    cur.close()
+    conn.close()
+
+    return redirect("/admin/faqs")
+
+
+@app.post("/admin/faqs/delete/<int:faq_id>")
 def admin_faq_delete(faq_id: int):
     red = admin_required()
     if red:
@@ -808,7 +1037,7 @@ def admin_faq_delete(faq_id: int):
     cur.close()
     conn.close()
 
-    return redirect(url_for("admin_faq_list"))
+    return redirect("/admin/faqs")
 
 
 # =========================

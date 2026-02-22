@@ -366,10 +366,18 @@ async function refreshConversations() {
 
 async function loadConversation(conversationId) {
   if (!conversationId) return;
-  const data = await apiFetchJson(`/api/conversations/${conversationId}`, { method: "GET" });
+
+  // Il backend espone i messaggi su /api/conversations/<id>/messages.
+  // Per compatibilità, se fallisce proviamo anche /api/conversations/<id> (che in alcune versioni include messages).
+  let data = null;
+  try {
+    data = await apiFetchJson(`/api/conversations/${conversationId}/messages`, { method: "GET" });
+  } catch (e) {
+    data = await apiFetchJson(`/api/conversations/${conversationId}`, { method: "GET" });
+  }
 
   clearMessages();
-  const messages = data.messages || [];
+  const messages = (data && data.messages) ? data.messages : [];
   if (messages.length === 0) {
     showGreeting();
     return;
@@ -380,7 +388,6 @@ async function loadConversation(conversationId) {
     appendBubble(m.content || "", who);
   });
 }
-
 async function createConversationIfNeeded() {
   if (!currentUser) return null;
 
@@ -429,7 +436,7 @@ async function sendMessage(text) {
     }
 
     const payload = {
-      question: msg,
+      message: msg,
       conversation_id: convoId || null,
     };
 
