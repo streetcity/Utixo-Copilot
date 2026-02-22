@@ -478,6 +478,64 @@ body.chat-open .chat-drawer { transform: translateX(0); }
     background: rgba(37,99,235,0.12);
     border-color: rgba(37,99,235,0.20);
 }
+/* Bubble actions (feedback / suggestions) */
+.chat-bubble .bubble-actions{
+    display: flex;
+    gap: 8px;
+    margin-top: 10px;
+    align-items: center;
+}
+.chat-bubble .action-btn{
+    border: 1px solid rgba(2,6,23,0.12);
+    background: rgba(255,255,255,0.65);
+    color: var(--text-main);
+    border-radius: 12px;
+    padding: 6px 10px;
+    font-weight: 700;
+    cursor: pointer;
+}
+.chat-bubble .action-btn:hover{
+    background: rgba(255,255,255,0.85);
+}
+.chat-bubble .action-btn.disabled,
+.chat-bubble .action-btn:disabled{
+    opacity: 0.6;
+    cursor: default;
+}
+.chat-bubble .bubble-suggestions .action-btn{
+    min-width: 38px;
+}
+
+/* Suggestions: show label next to number (no tooltip needed) */
+.chat-bubble .bubble-suggestions{
+    flex-direction: column;
+    align-items: stretch;
+}
+.chat-bubble .suggestion-btn{
+    display: flex;
+    align-items: center;
+    justify-content: flex-start;
+    gap: 10px;
+    padding: 10px 12px;
+    text-align: left;
+}
+.chat-bubble .suggestion-num{
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    border-radius: 10px;
+    background: rgba(37,99,235,0.12);
+    border: 1px solid rgba(37,99,235,0.22);
+    font-weight: 900;
+}
+.chat-bubble .suggestion-label{
+    flex: 1;
+    font-weight: 700;
+    line-height: 1.25;
+    opacity: 0.95;
+}
 .chat-bubble.bot { margin-right: auto; }
 .chat-bubble.meta { opacity: 0.75; font-style: italic; }
 

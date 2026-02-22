@@ -41,6 +41,41 @@
         </div>
       </div>
     </div>
+<div class="admin-card">
+  <div class="admin-kpi">
+    <div>
+      <div class="admin-kpi-label">Feedback totali</div>
+      <div class="admin-kpi-value">{{ fb_total }}</div>
+    </div>
+  </div>
+</div>
+
+<div class="admin-card">
+  <div class="admin-kpi">
+    <div>
+      <div class="admin-kpi-label">👍 Utili</div>
+      <div class="admin-kpi-value">{{ fb_up }}</div>
+    </div>
+  </div>
+</div>
+
+<div class="admin-card">
+  <div class="admin-kpi">
+    <div>
+      <div class="admin-kpi-label">👎 Non utili</div>
+      <div class="admin-kpi-value">{{ fb_down }}</div>
+    </div>
+  </div>
+</div>
+
+<div class="admin-card">
+  <div class="admin-kpi">
+    <div>
+      <div class="admin-kpi-label">Tasso utilità</div>
+      <div class="admin-kpi-value">{{ fb_rate }}%</div>
+    </div>
+  </div>
+</div>
 
     <div class="admin-card admin-card-wide">
       <div class="admin-card-title">Andamento ultimi 14 giorni</div>
@@ -68,4 +103,34 @@
       <div class="admin-hint">Suggerimento: per aumentare i match, arricchisci le FAQ con varianti nelle risposte.</div>
     </div>
   </section>
+
+
+<section class="admin-grid" aria-label="Feedback">
+  <div class="admin-card admin-card-wide">
+    <div class="admin-card-title">FAQ con più feedback negativi (ultimi 30 giorni)</div>
+    <div class="admin-table-wrap">
+      <table class="admin-table">
+        <thead>
+          <tr>
+            <th>FAQ</th>
+            <th>👎</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% if top_bad and top_bad|length > 0 %}
+            {% for r in top_bad %}
+              <tr>
+                <td><a href="/admin/faqs/edit/{{ r.faq_id }}">{{ r.domanda }}</a></td>
+                <td>{{ r.n_down }}</td>
+              </tr>
+            {% endfor %}
+          {% else %}
+            <tr><td colspan="2" class="admin-muted">Nessun feedback negativo negli ultimi 30 giorni.</td></tr>
+          {% endif %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
 {% endblock %}

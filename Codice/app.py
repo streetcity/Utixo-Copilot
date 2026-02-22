@@ -59,7 +59,13 @@ TICKET_URL = os.getenv(
 HUMANIZE_ENABLED = (os.getenv("HUMANIZE_ENABLED", "1").strip() == "1")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "").strip()
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-5.2").strip()
-OPENAI_TEMPERATURE = float(os.getenv("OPENAI_TEMPERATURE", "0.3"))
+OPENAI_TEMPERATURE = float(os.getenv("OPENAI_TEMPERATURE", "0.2"))
+
+# Local LLM (Ollama) for free self-hosted humanization (optional)
+OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://127.0.0.1:11434").strip()
+OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "").strip()  # es: "llama3.1:8b-instruct"
+OLLAMA_ENABLED = (os.getenv("OLLAMA_ENABLED", "1").strip() == "1")
+OLLAMA_TIMEOUT = float(os.getenv("OLLAMA_TIMEOUT", "20"))
 OPENAI_TIMEOUT_SEC = int(os.getenv("OPENAI_TIMEOUT_SEC", "12"))
 
 # Admin hard-allowlist (username). Default: admin
@@ -143,62 +149,218 @@ def _extract_output_text_from_openai_response(payload: dict) -> str:
     return "\n".join([p for p in parts if p]).strip()
 
 
+def _ollama_generate(prompt: str) -> Optional[str]:
+    """Chiama Ollama locale (HTTP). Ritorna None se non disponibile."""
+    if not OLLAMA_ENABLED or not OLLAMA_MODEL:
+        return None
+    try:
+        url = OLLAMA_HOST.rstrip("/") + "/api/generate"
+        payload = {
+            "model": OLLAMA_MODEL,
+            "prompt": prompt,
+            "stream": False,
+            "options": {"temperature": 0.2, "num_predict": 220},
+        }
+        req = urllib.request.Request(
+            url,
+            data=json.dumps(payload).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+        )
+        with urllib.request.urlopen(req, timeout=OLLAMA_TIMEOUT) as resp:
+            raw = resp.read().decode("utf-8", errors="replace")
+        data = json.loads(raw) if raw else {}
+        out = (data.get("response") or "").strip()
+        return out or None
+    except Exception:
+        return None
+
+
+def humanize_answer_free(user_question: str, skeleton_answer: str) -> str:
+    """Umanizza gratis senza inventare: solo formatting + micro-varianti."""
+    ans = (skeleton_answer or "").strip()
+    if not ans:
+        return ans
+
+    short = len(ans) < 140
+    prefixes = [
+        "Ok—ti rispondo subito:",
+        "Perfetto, ecco come fare:",
+        "Certo. Ti lascio i passaggi:",
+        "Va bene, ti spiego in modo pratico:",
+    ]
+    suffixes = [
+        "Se mi dici che ambiente usi (Windows/Mac/Server) la rendo ancora più precisa.",
+        "Se ti compare un errore specifico, incollamelo e lo interpretiamo.",
+        "Se vuoi, dimmi cosa hai già provato così evitiamo doppioni.",
+        "",
+    ]
+
+    parts = [p.strip() for p in re.split(r"\n+|\.\s+", ans) if p.strip()]
+    if len(parts) >= 4 and not any(ans.lstrip().startswith(x) for x in ("- ", "• ", "1) ", "1. ")):
+        ans_fmt = "\n".join([f"- {p}" for p in parts])
+    else:
+        ans_fmt = ans
+
+    if short:
+        return ans_fmt
+    return f"{random.choice(prefixes)}\n\n{ans_fmt}\n\n{random.choice(suffixes)}".strip()
+
+
+def _ollama_generate(prompt: str) -> Optional[str]:
+    """Chiama Ollama locale (HTTP). Ritorna None se non disponibile."""
+    if not OLLAMA_ENABLED or not OLLAMA_MODEL:
+        return None
+    try:
+        url = OLLAMA_HOST.rstrip("/") + "/api/generate"
+        payload = {
+            "model": OLLAMA_MODEL,
+            "prompt": prompt,
+            "stream": False,
+            "options": {"temperature": 0.2, "num_predict": 220},
+        }
+        req = urllib.request.Request(
+            url,
+            data=json.dumps(payload).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+        )
+        with urllib.request.urlopen(req, timeout=OLLAMA_TIMEOUT) as resp:
+            raw = resp.read().decode("utf-8", errors="replace")
+        data = json.loads(raw) if raw else {}
+        out = (data.get("response") or "").strip()
+        return out or None
+    except Exception:
+        return None
+
+
+def humanize_answer_free(user_question: str, skeleton_answer: str) -> str:
+    """Umanizza gratis senza inventare: solo formatting + micro-varianti."""
+    ans = (skeleton_answer or "").strip()
+    if not ans:
+        return ans
+
+    short = len(ans) < 140
+    prefixes = [
+        "Ok—ti rispondo subito:",
+        "Perfetto, ecco come fare:",
+        "Certo. Ti lascio i passaggi:",
+        "Va bene, ti spiego in modo pratico:",
+    ]
+    suffixes = [
+        "Se mi dici che ambiente usi (Windows/Mac/Server) la rendo ancora più precisa.",
+        "Se ti compare un errore specifico, incollamelo e lo interpretiamo.",
+        "Se vuoi, dimmi cosa hai già provato così evitiamo doppioni.",
+        "",
+    ]
+
+    parts = [p.strip() for p in re.split(r"\n+|\.\s+", ans) if p.strip()]
+    if len(parts) >= 4 and not any(ans.lstrip().startswith(x) for x in ("- ", "• ", "1) ", "1. ")):
+        ans_fmt = "\n".join([f"- {p}" for p in parts])
+    else:
+        ans_fmt = ans
+
+    if short:
+        return ans_fmt
+    return f"{random.choice(prefixes)}\n\n{ans_fmt}\n\n{random.choice(suffixes)}".strip()
+
+
 def humanize_answer(user_question: str, skeleton_answer: str) -> str:
     """Riscrive la risposta rendendola più naturale SENZA aggiungere nuove info.
-    Se OPENAI_API_KEY non è impostata o HUMANIZE_ENABLED=0 -> ritorna skeleton_answer.
+    Ordine: Ollama locale (free) -> OpenAI (se configurata) -> template free.
+    Se HUMANIZE_ENABLED=0 -> ritorna skeleton_answer.
     """
-    if not HUMANIZE_ENABLED or not OPENAI_API_KEY:
+    if not HUMANIZE_ENABLED:
+        return skeleton_answer
+    if not (skeleton_answer or "").strip():
         return skeleton_answer
 
-    instructions = (
-        "Sei Utixo Copilot, assistente tecnico di Utixo. "
-        "Il tuo compito è RISCRIVERE una risposta esistente rendendola più umana, chiara e ben formattata.\n\n"
-        "REGOLE OBBLIGATORIE:\n"
-        "1) NON aggiungere informazioni nuove non presenti nella risposta base.\n"
-        "2) NON inventare passaggi, link, prezzi, nomi di prodotti o procedure.\n"
-        "3) Mantieni TUTTI i punti importanti della risposta base (lo 'scheletro').\n"
-        "4) Se la risposta base è troppo corta o ambigua, NON espandere: al massimo fai una domanda di chiarimento in chiusura.\n"
-        "5) Rispondi in italiano.\n"
-        "6) Usa paragrafi brevi e, se utile, punti elenco."
-    )
+    # 1) Ollama locale (free self-host)
+    if OLLAMA_ENABLED and OLLAMA_MODEL:
+        prompt = (
+            "Sei Utixo Copilot, assistente tecnico di Utixo. "
+            "RISCRIVI la RISPOSTA BASE rendendola più umana e ben formattata, senza aggiungere nuove informazioni."
+            "\n\nDOMANDA UTENTE:\n" + (user_question or "").strip() +
+            "\n\nRISPOSTA BASE:\n" + (skeleton_answer or "").strip() +
+            "\n\nREGOLE: non inventare, non aggiungere procedure/link. Rispondi in italiano, breve e chiaro."
+        )
+        out = _ollama_generate(prompt)
+        if out:
+            return out
 
-    user_input = (
-        "DOMANDA UTENTE:\n"
-        f"{user_question.strip()}\n\n"
-        "RISPOSTA BASE (da mantenere come contenuto, ma riscrivi tono/forma):\n"
-        f"{skeleton_answer.strip()}\n\n"
-        "Ora riscrivi la risposta rispettando le REGOLE."
-    )
+    # 2) OpenAI (se configurata)
+    if OPENAI_API_KEY:
+        try:
+            instructions = (
+                "Sei Utixo Copilot, assistente tecnico di Utixo. "
+                "Il tuo compito è RISCRIVERE una risposta esistente rendendola più umana, chiara e ben formattata.\n\n"
+                "REGOLE OBBLIGATORIE:\n"
+                "1) NON aggiungere informazioni nuove non presenti nella risposta base.\n"
+                "2) NON inventare passaggi, link, prezzi, nomi di prodotti o procedure.\n"
+                "3) Mantieni TUTTI i punti importanti della risposta base (lo 'scheletro').\n"
+                "4) Se la risposta base è troppo corta o ambigua, NON espandere: al massimo fai una domanda di chiarimento in chiusura.\n"
+                "5) Rispondi in italiano.\n"
+                "6) Usa paragrafi brevi e, se utile, punti elenco."
+            )
 
-    body = {
-        "model": OPENAI_MODEL,
-        "instructions": instructions,
-        "input": user_input,
-        "temperature": OPENAI_TEMPERATURE,
-    }
+            user_input = (
+                "DOMANDA UTENTE:\n"
+                f"{(user_question or '').strip()}\n\n"
+                "RISPOSTA BASE (da mantenere come contenuto, ma riscrivi tono/forma):\n"
+                f"{(skeleton_answer or '').strip()}\n\n"
+                "Ora riscrivi la risposta rispettando le REGOLE."
+            )
 
-    req = urllib.request.Request(
-        "https://api.openai.com/v1/responses",
-        data=json.dumps(body).encode("utf-8"),
-        headers={
-            "Authorization": f"Bearer {OPENAI_API_KEY}",
-            "Content-Type": "application/json",
-        },
-        method="POST",
-    )
+            body = {
+                "model": OPENAI_MODEL,
+                "instructions": instructions,
+                "input": user_input,
+                "temperature": OPENAI_TEMPERATURE,
+            }
 
-    try:
-        with urllib.request.urlopen(req, timeout=OPENAI_TIMEOUT_SEC) as resp:
-            raw = resp.read().decode("utf-8", errors="replace")
-            payload = json.loads(raw)
-            out_text = _extract_output_text_from_openai_response(payload)
-            return out_text if out_text else skeleton_answer
-    except Exception:
-        return skeleton_answer
+            req = urllib.request.Request(
+                "https://api.openai.com/v1/responses",
+                data=json.dumps(body).encode("utf-8"),
+                headers={
+                    "Content-Type": "application/json",
+                    "Authorization": f"Bearer {OPENAI_API_KEY}",
+                },
+            )
 
+            with urllib.request.urlopen(req, timeout=20) as resp:
+                raw = resp.read().decode("utf-8", errors="replace")
+            data = json.loads(raw) if raw else {}
+            out = _extract_response_text(data)
+            return out or humanize_answer_free(user_question, skeleton_answer)
+        except Exception:
+            return humanize_answer_free(user_question, skeleton_answer)
+
+    # 3) fallback template
+    return humanize_answer_free(user_question, skeleton_answer)
+
+
+FAQ_SYNONYMS = {
+    # normalizzazioni comuni (aggiungi qui i tuoi)
+    "m365": "microsoft 365",
+    "office365": "microsoft 365",
+    "o365": "microsoft 365",
+    "exo": "exchange online",
+    "exchangeonline": "exchange online",
+    "onedrive": "one drive",
+    "sharepointonline": "sharepoint online",
+    "teams": "microsoft teams",
+    "pwd": "password",
+    "pass": "password",
+    "2fa": "autenticazione a due fattori",
+    "mfa": "autenticazione a due fattori",
+}
+
+def _apply_synonyms(t: str) -> str:
+    for k, v in FAQ_SYNONYMS.items():
+        t = re.sub(rf"\b{re.escape(k)}\b", v, t)
+    return t
 
 def clean_text(text: str) -> str:
     t = (text or "").lower()
+    t = _apply_synonyms(t)
     t = re.sub(r"[^\w\s]", " ", t, flags=re.UNICODE)
     t = re.sub(r"\s+", " ", t).strip()
     return t
@@ -613,7 +775,8 @@ def insert_log_message(
     matched_id: Optional[int],
     user_id: Optional[int],
     conversation_id: Optional[int],
-):
+) -> Optional[int]:
+    """Inserisce un log e ritorna log_id (utile per feedback)."""
     try:
         conn = get_connection()
         cur = conn.cursor()
@@ -633,12 +796,73 @@ def insert_log_message(
                 int(resolved),
             ),
         )
+        log_id = int(cur.lastrowid)
         conn.commit()
         cur.close()
         conn.close()
+        return log_id
     except Exception:
-        pass
+        return None
 
+
+
+# =========================
+# FAQ matching (cache + robust scoring)
+# =========================
+
+_FAQ_CACHE: Dict[str, Any] = {"fingerprint": None}
+
+def _fingerprint_faqs(faqs: List[Dict[str, Any]]) -> str:
+    h = hashlib.sha256()
+    for r in faqs:
+        h.update(str(r.get("id")).encode())
+        h.update((r.get("domanda") or "").encode("utf-8", errors="ignore"))
+        h.update((r.get("risposta1") or "").encode("utf-8", errors="ignore"))
+        h.update((r.get("risposta2") or "").encode("utf-8", errors="ignore"))
+        h.update((r.get("risposta3") or "").encode("utf-8", errors="ignore"))
+    return h.hexdigest()
+
+def _build_faq_index(faqs: List[Dict[str, Any]]):
+    q_clean = [clean_text(r.get("domanda") or "") for r in faqs]
+
+    # Word TF-IDF (bigrams per sinonimi/frasi)
+    vec_word = TfidfVectorizer(ngram_range=(1, 2), min_df=1)
+    X_word = vec_word.fit_transform(q_clean)
+
+    # Char TF-IDF (robusto a typo / varianti)
+    vec_char = TfidfVectorizer(analyzer="char_wb", ngram_range=(3, 5), min_df=1)
+    X_char = vec_char.fit_transform(q_clean)
+
+    return q_clean, vec_word, X_word, vec_char, X_char
+
+def _get_faq_index(faqs: List[Dict[str, Any]]):
+    fp = _fingerprint_faqs(faqs)
+    if _FAQ_CACHE.get("fingerprint") != fp:
+        q_clean, vec_word, X_word, vec_char, X_char = _build_faq_index(faqs)
+        _FAQ_CACHE.update({
+            "fingerprint": fp,
+            "faqs": faqs,
+            "q_clean": q_clean,
+            "vec_word": vec_word,
+            "X_word": X_word,
+            "vec_char": vec_char,
+            "X_char": X_char,
+        })
+    return _FAQ_CACHE
+
+def _score_faqs(user_clean: str, cache: Dict[str, Any]):
+    vec_word = cache["vec_word"]; X_word = cache["X_word"]
+    vec_char = cache["vec_char"]; X_char = cache["X_char"]
+
+    q_w = vec_word.transform([user_clean])
+    q_c = vec_char.transform([user_clean])
+
+    sim_word = cosine_similarity(q_w, X_word)[0]
+    sim_char = cosine_similarity(q_c, X_char)[0]
+
+    alpha = float(os.getenv("SIM_ALPHA_WORD", "0.65"))
+    sim = alpha * sim_word + (1.0 - alpha) * sim_char
+    return sim, sim_word, sim_char
 
 # =========================
 # Chat core
@@ -688,15 +912,27 @@ def _handle_chat(user_msg: str, user_id: Optional[int], conversation_id: Optiona
     if user_clean == "":
         return jsonify({"ok": True, "reply": "Puoi riformulare con più dettagli?", "faq_matched_id": None, "conversation_id": conversation_id})
 
-    vectorizer = TfidfVectorizer()
-    X = vectorizer.fit_transform(domande_pulite + [user_clean])
-    sim = cosine_similarity(X[-1], X[:-1])[0]
+    cache = _get_faq_index(faqs)
+    sim, sim_word, sim_char = _score_faqs(user_clean, cache)
 
     best_index = int(sim.argmax())
     best_score = float(sim[best_index])
 
+    # Top suggestions (per chiarimenti)
+    top_k = int(os.getenv("SUGGEST_TOPK", "3"))
+    top_idx = sim.argsort()[::-1][:max(1, top_k)]
+    suggestions = []
+    for i in top_idx:
+        row = faqs[int(i)]
+        suggestions.append({
+            "id": int(row["id"]),
+            "domanda": (row.get("domanda") or "").strip(),
+            "score": float(sim[int(i)]),
+        })
+
     matched_id: Optional[int] = None
     reply = "Non ho trovato una risposta precisa."
+    need_clarification = False
 
     if best_score >= SIM_THRESHOLD:
         best_row = faqs[best_index]
@@ -704,8 +940,20 @@ def _handle_chat(user_msg: str, user_id: Optional[int], conversation_id: Optiona
         reply = random.choice(risposte) if risposte else "Non ho una risposta precisa."
         matched_id = int(best_row["id"])
         reply = humanize_answer(user_msg, reply)
+    else:
+        need_clarification = True
+        low = float(os.getenv("SIM_LOW_HINT", "0.12"))
+        if suggestions and float(suggestions[0]["score"]) >= low:
+            reply = (
+                "Non sono sicuro al 100% di cosa intendi. "
+                "Puoi dirmi quale di questi casi è più vicino?\\n\\n"
+                + "\\n".join([f"{idx+1}) {s['domanda']}" for idx, s in enumerate(suggestions)])
+                + "\\n\\nRispondi con il numero (1/2/3) oppure aggiungi un dettaglio (es. prodotto/errore)."
+            )
+        else:
+            reply = "Non ho trovato una risposta precisa. Puoi aggiungere un dettaglio (es. prodotto, errore, schermata) così ti guido meglio?"
 
-    insert_log_message(
+    log_id = insert_log_message(
         user_msg=user_msg,
         reply=reply,
         similarity=best_score,
@@ -748,6 +996,9 @@ def _handle_chat(user_msg: str, user_id: Optional[int], conversation_id: Optiona
             "similarity": round(best_score, 3),
             "conversation_id": conversation_id,
             "ticket_url": TICKET_URL,
+            "log_id": log_id,
+            "need_clarification": bool(need_clarification) if 'need_clarification' in locals() else False,
+            "suggestions": suggestions if 'suggestions' in locals() else [],
         }
     )
 
@@ -779,6 +1030,64 @@ def ask_alias():
     # alias per vecchi frontend
     return chat()
 
+
+
+
+# =========================
+# Feedback endpoint
+# =========================
+
+@app.post("/feedback")
+def feedback():
+    data = request.get_json(silent=True) or {}
+    try:
+        log_id = int(data.get("log_id"))
+    except Exception:
+        return jsonify({"ok": False, "error": "log_id non valido"}), 400
+
+    try:
+        value = int(data.get("value"))
+    except Exception:
+        value = 0
+    if value not in (1, -1):
+        return jsonify({"ok": False, "error": "value deve essere 1 o -1"}), 400
+
+    comment = (data.get("comment") or "").strip()
+    if comment:
+        comment = comment[:500]
+
+    user = current_user()
+    user_id = int(user["id"]) if user else None
+
+    # Recupera faq_id dal log (se presente)
+    faq_id = None
+    try:
+        conn = get_connection()
+        cur = conn.cursor(dictionary=True)
+        cur.execute("SELECT faq_id FROM logs WHERE id=%s LIMIT 1", (int(log_id),))
+        row = cur.fetchone() or {}
+        cur.close()
+        faq_id = int(row["faq_id"]) if row.get("faq_id") else None
+
+        cur = conn.cursor()
+        cur.execute(
+            """
+            INSERT INTO feedback (log_id, user_id, faq_id, value, comment)
+            VALUES (%s, %s, %s, %s, %s)
+            """,
+            (int(log_id), user_id, faq_id, int(value), comment or None),
+        )
+        conn.commit()
+        cur.close()
+        conn.close()
+    except Exception:
+        try:
+            conn.close()
+        except Exception:
+            pass
+        return jsonify({"ok": False, "error": "impossibile salvare feedback"}), 500
+
+    return jsonify({"ok": True})
 
 # =========================
 # Admin UI (templates)
@@ -852,12 +1161,23 @@ def admin_dashboard():
     cur.execute("SELECT COUNT(*) AS n FROM logs")
     log_count = int((cur.fetchone() or {}).get("n", 0))
 
-    # schema: resolved tinyint(1)
     cur.execute("SELECT COUNT(*) AS n FROM logs WHERE resolved=1")
     resolved_ok = int((cur.fetchone() or {}).get("n", 0))
 
     cur.execute("SELECT COUNT(*) AS n FROM logs WHERE resolved=0")
     resolved_no = int((cur.fetchone() or {}).get("n", 0))
+
+    # Feedback KPI
+    cur.execute("SELECT COUNT(*) AS n FROM feedback")
+    fb_total = int((cur.fetchone() or {}).get("n", 0))
+
+    cur.execute("SELECT COUNT(*) AS n FROM feedback WHERE value=1")
+    fb_up = int((cur.fetchone() or {}).get("n", 0))
+
+    cur.execute("SELECT COUNT(*) AS n FROM feedback WHERE value=-1")
+    fb_down = int((cur.fetchone() or {}).get("n", 0))
+
+    fb_rate = round((fb_up / fb_total) * 100, 1) if fb_total > 0 else 0.0
 
     # ultimi 14 giorni: group by data_ora
     cur.execute(
@@ -871,6 +1191,20 @@ def admin_dashboard():
     )
     daily = _normalize_rows(cur.fetchall() or [])
 
+    # Top FAQ con più feedback negativi (ultimi 30 giorni)
+    cur.execute(
+        """
+        SELECT f.id AS faq_id, f.domanda AS domanda, COUNT(*) AS n_down
+        FROM feedback b
+        JOIN faq f ON f.id = b.faq_id
+        WHERE b.value=-1 AND b.created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY)
+        GROUP BY f.id
+        ORDER BY n_down DESC
+        LIMIT 8
+        """
+    )
+    top_bad = _normalize_rows(cur.fetchall() or [])
+
     cur.close()
     conn.close()
 
@@ -882,6 +1216,11 @@ def admin_dashboard():
         resolved_ok=resolved_ok,
         resolved_no=resolved_no,
         daily=daily,
+        fb_total=fb_total,
+        fb_up=fb_up,
+        fb_down=fb_down,
+        fb_rate=fb_rate,
+        top_bad=top_bad,
     )
 
 

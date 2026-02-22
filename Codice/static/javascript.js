@@ -102,9 +102,97 @@ function appendBubble(text, who = "bot", extraClass = "") {
   if (!messagesEl) return null;
   const div = document.createElement("div");
   div.className = `chat-bubble ${who} ${extraClass}`.trim();
-  div.innerHTML = escapeHtml(text);
+  div.innerHTML = escapeHtml(text).replaceAll("\n", "<br>");
   messagesEl.appendChild(div);
   messagesEl.scrollTop = messagesEl.scrollHeight;
+  return div;
+}
+
+
+
+function appendBotMessage(text, meta = {}) {
+  const div = appendBubble(text, "bot");
+  if (!div) return null;
+
+  // Suggestions (quick replies) for clarification
+  const suggestions = Array.isArray(meta.suggestions) ? meta.suggestions : [];
+  if (meta.need_clarification && suggestions.length > 0) {
+    const sWrap = document.createElement("div");
+    sWrap.className = "bubble-actions bubble-suggestions";
+
+    suggestions.slice(0, 3).forEach((s, idx) => {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "action-btn suggestion-btn";
+
+      const num = document.createElement("span");
+      num.className = "suggestion-num";
+      num.textContent = `${idx + 1}`;
+
+      const label = document.createElement("span");
+      label.className = "suggestion-label";
+      const raw = (s.domanda || "").trim();
+      const truncated = raw.length > 64 ? raw.slice(0, 61) + "…" : raw;
+      label.textContent = truncated || "Opzione";
+
+      btn.appendChild(num);
+      btn.appendChild(label);
+
+      btn.addEventListener("click", () => {
+        // invia il testo della FAQ suggerita (più robusto del solo numero)
+        sendMessage((s.domanda || "").trim());
+      });
+      sWrap.appendChild(btn);
+    });
+
+    div.appendChild(sWrap);
+  }
+
+  // Feedback buttons
+  if (meta.log_id) {
+    const fWrap = document.createElement("div");
+    fWrap.className = "bubble-actions bubble-feedback";
+
+    const up = document.createElement("button");
+    up.type = "button";
+    up.className = "action-btn";
+    up.textContent = "👍";
+    up.title = "Utile";
+
+    const down = document.createElement("button");
+    down.type = "button";
+    down.className = "action-btn";
+    down.textContent = "👎";
+    down.title = "Non utile";
+
+    const lock = () => {
+      up.disabled = true;
+      down.disabled = true;
+      up.classList.add("disabled");
+      down.classList.add("disabled");
+    };
+
+    const sendFb = async (value) => {
+      try {
+        await apiFetchJson("/feedback", {
+          method: "POST",
+          body: JSON.stringify({ log_id: meta.log_id, value }),
+        });
+        lock();
+      } catch (_) {
+        // non bloccare UI per errori feedback
+        lock();
+      }
+    };
+
+    up.addEventListener("click", () => sendFb(1));
+    down.addEventListener("click", () => sendFb(-1));
+
+    fWrap.appendChild(up);
+    fWrap.appendChild(down);
+    div.appendChild(fWrap);
+  }
+
   return div;
 }
 
@@ -449,7 +537,11 @@ async function sendMessage(text) {
     lastMatchedFaqId = data.faq_matched_id ?? null;
 
     typing && typing.remove();
-    appendBubble(data.reply || "Nessuna risposta.", "bot");
+    appendBotMessage(data.reply || "Nessuna risposta.", {
+      log_id: data.log_id || null,
+      need_clarification: !!data.need_clarification,
+      suggestions: data.suggestions || [],
+    });
 
     // se per qualche motivo il backend assegna un conversation_id (es. prima chat), prendilo
     if (!currentConversationId && data.conversation_id) {
