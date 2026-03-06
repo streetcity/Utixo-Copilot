@@ -6,7 +6,7 @@ cd C:\Users\tomma\Documents\GitHub\Utixo-Copilot\Codice
 cd C:\Users\rosag\Desktop\Utixo-Copilot\Utixo-Copilot\Codice> 
 
 e eseguite:
-venv\Scripts\activate
+cd C:\Users\proprietario\OneDrive\Documenti\GitHub\Utixo-Copilot\Codice
 
 attivate apache e mysql su xampp (importate db o non otterrete nessuna risposta)
 
