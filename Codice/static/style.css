@@ -28,9 +28,6 @@ html, body {
 
 a { color: inherit; text-decoration: none; }
 
-/* =========================
-   TOPBAR
-   ========================= */
 .topbar {
     position: sticky;
     top: 0;
@@ -122,9 +119,6 @@ a { color: inherit; text-decoration: none; }
     font-weight: 800;
 }
 
-/* =========================
-   HERO / SECTIONS
-   ========================= */
 .hero {
     background: linear-gradient(180deg, var(--bg-hero-top), var(--bg-hero-bottom));
     color: var(--text-on-dark);
@@ -282,9 +276,6 @@ a { color: inherit; text-decoration: none; }
     font-weight: 700;
 }
 
-/* =========================
-   CHAT: FAB + BACKDROP + DRAWER
-   ========================= */
 .floating-chat-button {
     position: fixed;
     right: 18px;
@@ -349,7 +340,6 @@ body.chat-open .chat-drawer { transform: translateX(0); }
     color: #16a34a;
 }
 
-/* X button (neutral) */
 .icon-button {
     width: 38px;
     height: 38px;
@@ -371,7 +361,6 @@ body.chat-open .chat-drawer { transform: translateX(0); }
     border-bottom: 1px solid rgba(15,23,42,0.08);
 }
 
-/* "Nuova chat" + chips */
 .chip-button {
     border: 1px solid rgba(15,23,42,0.12);
     background: rgba(255,255,255,0.60);
@@ -384,7 +373,6 @@ body.chat-open .chat-drawer { transform: translateX(0); }
 }
 .chip-button:hover { background: rgba(2,6,23,0.05); }
 
-/* Chip secondaria (Apri ticket) */
 .chip-button.chip-secondary {
     background: transparent;
     border-color: rgba(37,99,235,0.35);
@@ -478,7 +466,6 @@ body.chat-open .chat-drawer { transform: translateX(0); }
     background: rgba(37,99,235,0.12);
     border-color: rgba(37,99,235,0.20);
 }
-/* Bubble actions (feedback / suggestions) */
 .chat-bubble .bubble-actions{
     display: flex;
     gap: 8px;
@@ -506,7 +493,6 @@ body.chat-open .chat-drawer { transform: translateX(0); }
     min-width: 38px;
 }
 
-/* Suggestions: show label next to number (no tooltip needed) */
 .chat-bubble .bubble-suggestions{
     flex-direction: column;
     align-items: stretch;
@@ -573,9 +559,6 @@ body.chat-open .chat-drawer { transform: translateX(0); }
 
 .hidden { display: none !important; }
 
-/* =========================
-   USER MENU + MODALS
-   ========================= */
 .user-menu { position: relative; display: inline-flex; }
 
 .user-menu-dropdown {
@@ -661,9 +644,6 @@ body.chat-open .chat-drawer { transform: translateX(0); }
     font-size: 13px;
 }
 
-/* =========================
-   DARK MODE – COERENTE (fix leggibilità + niente bottoni bianchi)
-   ========================= */
 body.dark {
     --bg-body: #0b1220;
     --bg-section: rgba(15,23,42,0.78);
@@ -692,7 +672,6 @@ body.dark .footer {
     border-top-color: rgba(148,163,184,0.14);
 }
 
-/* Drawer + toolbars */
 body.dark .chat-drawer {
     background: #0b1220; /* opaco */
     border-left-color: rgba(148,163,184,0.14);
@@ -707,7 +686,6 @@ body.dark .chat-tools {
     border-bottom-color: rgba(148,163,184,0.14);
 }
 
-/* ✅ FIX: chip “Nuova chat” (niente bianco) */
 body.dark .chip-button {
     background: rgba(15,23,42,0.85);
     border-color: rgba(148,163,184,0.18);
@@ -725,8 +703,6 @@ body.dark .chip-button.chip-secondary:hover {
     background: rgba(15,23,42,0.90);
 }
 
-
-/* ✅ FIX: pulsante X (niente bianco) */
 body.dark .icon-button {
     background: rgba(15,23,42,0.85);
     border-color: rgba(148,163,184,0.18);
@@ -734,7 +710,6 @@ body.dark .icon-button {
 }
 body.dark .icon-button:hover { background: rgba(15,23,42,0.98); }
 
-/* Conversations pane */
 body.dark .chat-conversations {
     background: rgba(2,6,23,0.55);
     border-right-color: rgba(148,163,184,0.14);
@@ -757,7 +732,6 @@ body.dark .conv-item.active {
 }
 body.dark .conv-meta { color: rgba(156,163,175,0.9); }
 
-/* Chat area */
 body.dark .chat-ui { background: #0b1220; }
 body.dark .chat-messages { background: #0b1220; }
 
@@ -771,7 +745,6 @@ body.dark .chat-bubble.user {
     border-color: rgba(37,99,235,0.22);
 }
 
-/* Input bar */
 body.dark .chat-input-bar {
     background: #0b1220;
     border-top-color: rgba(148,163,184,0.14);
@@ -783,7 +756,6 @@ body.dark .chat-input-bar input {
 }
 body.dark .chat-input-bar input::placeholder { color: rgba(154,164,178,0.9); }
 
-/* ✅ FIX: dropdown utente (niente bianco) */
 body.dark .user-menu-dropdown {
     background: rgba(15,23,42,0.92);
     border-color: rgba(148,163,184,0.16);
@@ -792,7 +764,6 @@ body.dark .menu-item { color: var(--text-main); }
 body.dark .menu-item:hover { background: rgba(148,163,184,0.10); }
 body.dark .menu-item.danger:hover { background: rgba(239,68,68,0.14); }
 
-/* ✅ FIX: modal (niente bianco “sparato”) */
 body.dark .modal-card {
     background: rgba(15,23,42,0.95);
     border-color: rgba(148,163,184,0.16);
@@ -805,7 +776,6 @@ body.dark .field input {
     color: var(--text-main);
 }
 
-/* Cards/steps/faq in dark */
 body.dark .card,
 body.dark .step,
 body.dark .faq details {
@@ -813,9 +783,6 @@ body.dark .faq details {
     box-shadow: none;
 }
 
-/* =========================
-   RESPONSIVE
-   ========================= */
 @media (max-width: 980px) {
     .topbar-inner { max-width: 100%; }
     .nav-links { display: none; }
