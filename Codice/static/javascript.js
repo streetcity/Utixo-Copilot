@@ -15,7 +15,6 @@ const openChatButtons = document.querySelectorAll(".openChatBtn");
 const messagesEl = document.getElementById("messages");
 const chatForm = document.getElementById("chatForm");
 const inputEl = document.getElementById("userInput");
-const sendBtn = document.getElementById("sendBtn");
 
 // Tools / conversations
 const newChatBtn = document.getElementById("newChatBtn");
@@ -46,9 +45,6 @@ const registerError = document.getElementById("registerError");
 
 let currentUser = null;              // {id, username}
 let currentConversationId = null;    // number | null
-
-let lastSimilarity = null;
-let lastMatchedFaqId = null;
 
 function openChat() {
   body.classList.add("chat-open");
@@ -108,8 +104,6 @@ function appendBubble(text, who = "bot", extraClass = "") {
   return div;
 }
 
-
-
 function appendBotMessage(text, meta = {}) {
   const div = appendBubble(text, "bot");
   if (!div) return null;
@@ -156,13 +150,13 @@ function appendBotMessage(text, meta = {}) {
     const up = document.createElement("button");
     up.type = "button";
     up.className = "action-btn";
-    up.textContent = "👍";
+    up.textContent = "Utile";
     up.title = "Utile";
 
     const down = document.createElement("button");
     down.type = "button";
     down.className = "action-btn";
-    down.textContent = "👎";
+    down.textContent = "Non utile";
     down.title = "Non utile";
 
     const lock = () => {
@@ -533,9 +527,6 @@ async function sendMessage(text) {
       body: JSON.stringify(payload),
     });
 
-    lastSimilarity = data.similarity ?? null;
-    lastMatchedFaqId = data.faq_matched_id ?? null;
-
     typing && typing.remove();
     appendBotMessage(data.reply || "Nessuna risposta.", {
       log_id: data.log_id || null,
@@ -557,10 +548,6 @@ async function sendMessage(text) {
     appendBubble(`Errore: ${err.message || "impossibile inviare."}`, "bot");
   }
 }
-
-sendBtn?.addEventListener("click", () => {
-  sendMessage(inputEl ? inputEl.value : "");
-});
 
 chatForm?.addEventListener("submit", (e) => {
   e.preventDefault();
