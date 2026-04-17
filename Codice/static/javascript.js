@@ -150,14 +150,14 @@ function appendBotMessage(text, meta = {}) {
     const up = document.createElement("button");
     up.type = "button";
     up.className = "action-btn";
-    up.textContent = "Utile";
-    up.title = "Utile";
+    up.textContent = "👍";
+    up.title = "👍";
 
     const down = document.createElement("button");
     down.type = "button";
     down.className = "action-btn";
-    down.textContent = "Non utile";
-    down.title = "Non utile";
+    down.textContent = "👎";
+    down.title = "👎";
 
     const lock = () => {
       up.disabled = true;
