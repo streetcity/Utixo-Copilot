@@ -1,22 +1,15 @@
-// =========================
-// Utixo Copilot UI (drawer)
-// + Auth + Conversations
-// =========================
-
 const body = document.body;
 
-// Drawer elements
+// elementi principali della ui chat
 const backdrop = document.getElementById("backdrop");
 const floatingBtn = document.getElementById("floatingChatButton");
 const closeBtn = document.getElementById("closeChatDrawer");
 const openChatButtons = document.querySelectorAll(".openChatBtn");
 
-// Chat elements
 const messagesEl = document.getElementById("messages");
 const chatForm = document.getElementById("chatForm");
 const inputEl = document.getElementById("userInput");
 
-// Tools / conversations
 const newChatBtn = document.getElementById("newChatBtn");
 const openTicketBtn = document.getElementById("openTicketBtn");
 const conversationsPane = document.getElementById("conversationsPane");
@@ -24,7 +17,6 @@ const conversationsList = document.getElementById("conversationsList");
 const chatLoginHint = document.getElementById("chatLoginHint");
 const chatLayout = document.querySelector(".chat-layout");
 
-// Auth UI
 const loginBtn = document.getElementById("loginBtn");
 const registerBtn = document.getElementById("registerBtn");
 const userMenu = document.getElementById("userMenu");
@@ -34,7 +26,6 @@ const usernameLabel = document.getElementById("usernameLabel");
 const openChatsBtn = document.getElementById("openChatsBtn");
 const logoutBtn = document.getElementById("logoutBtn");
 
-// Modals
 const modalBackdrop = document.getElementById("modalBackdrop");
 const loginModal = document.getElementById("loginModal");
 const registerModal = document.getElementById("registerModal");
@@ -43,8 +34,9 @@ const registerForm = document.getElementById("registerForm");
 const loginError = document.getElementById("loginError");
 const registerError = document.getElementById("registerError");
 
-let currentUser = null;              // {id, username}
-let currentConversationId = null;    // number | null
+// stato login e chat selezionata
+let currentUser = null;
+let currentConversationId = null;
 
 function openChat() {
   body.classList.add("chat-open");
@@ -74,7 +66,6 @@ openChatButtons.forEach((btn) => {
   });
 });
 
-// Dark mode toggle
 const themeToggle = document.getElementById("themeToggle");
 if (themeToggle) {
   themeToggle.addEventListener("click", () => {
@@ -82,9 +73,6 @@ if (themeToggle) {
   });
 }
 
-// =========================
-// Utilities
-// =========================
 function escapeHtml(str) {
   return String(str)
     .replaceAll("&", "&amp;")
@@ -108,7 +96,7 @@ function appendBotMessage(text, meta = {}) {
   const div = appendBubble(text, "bot");
   if (!div) return null;
 
-  // Suggestions (quick replies) for clarification
+  // suggerimenti rapidi quando la risposta non e certa
   const suggestions = Array.isArray(meta.suggestions) ? meta.suggestions : [];
   if (meta.need_clarification && suggestions.length > 0) {
     const sWrap = document.createElement("div");
@@ -133,7 +121,7 @@ function appendBotMessage(text, meta = {}) {
       btn.appendChild(label);
 
       btn.addEventListener("click", () => {
-        // invia il testo della FAQ suggerita (più robusto del solo numero)
+        // uso la domanda completa per ridurre errori nel matching
         sendMessage((s.domanda || "").trim());
       });
       sWrap.appendChild(btn);
@@ -142,7 +130,7 @@ function appendBotMessage(text, meta = {}) {
     div.appendChild(sWrap);
   }
 
-  // Feedback buttons
+  // feedback sul singolo messaggio del bot
   if (meta.log_id) {
     const fWrap = document.createElement("div");
     fWrap.className = "bubble-actions bubble-feedback";
@@ -174,7 +162,6 @@ function appendBotMessage(text, meta = {}) {
         });
         lock();
       } catch (_) {
-        // non bloccare UI per errori feedback
         lock();
       }
     };
@@ -235,12 +222,9 @@ async function apiFetchJson(url, opts = {}) {
 
 
 
-// =========================
-// Ticket (WHMCS)
-// =========================
 const TICKET_URL = (window.UTIXO_TICKET_URL || "").trim();
 
-// Apri il form ticket senza pre-compilare nulla con i contenuti della chat.
+// apre il form ticket in una nuova scheda
 openTicketBtn?.addEventListener("click", () => {
   if (!TICKET_URL) {
     alert("Ticket URL non configurato.");
@@ -249,9 +233,6 @@ openTicketBtn?.addEventListener("click", () => {
   window.open(TICKET_URL, "_blank", "noopener");
 });
 
-// =========================
-// Auth + UI
-// =========================
 function updateChatLayout() {
   if (!chatLayout) return;
   const noConversations = conversationsPane?.classList.contains("hidden") || !currentUser;
@@ -344,7 +325,7 @@ openChatsBtn?.addEventListener("click", () => {
   openChat();
 });
 
-// Login submit
+// login utente
 loginForm?.addEventListener("submit", async (e) => {
   e.preventDefault();
   setError(loginError, "");
@@ -372,7 +353,7 @@ loginForm?.addEventListener("submit", async (e) => {
   }
 });
 
-// Register submit
+// registrazione utente
 registerForm?.addEventListener("submit", async (e) => {
   e.preventDefault();
   setError(registerError, "");
@@ -401,9 +382,6 @@ registerForm?.addEventListener("submit", async (e) => {
   }
 });
 
-// =========================
-// Conversations
-// =========================
 function renderConversations(items) {
   if (!conversationsList) return;
   conversationsList.innerHTML = "";
@@ -449,8 +427,7 @@ async function refreshConversations() {
 async function loadConversation(conversationId) {
   if (!conversationId) return;
 
-  // Il backend espone i messaggi su /api/conversations/<id>/messages.
-  // Per compatibilità, se fallisce proviamo anche /api/conversations/<id> (che in alcune versioni include messages).
+  // provo prima l'endpoint dei messaggi e poi il fallback storico
   let data = null;
   try {
     data = await apiFetchJson(`/api/conversations/${conversationId}/messages`, { method: "GET" });
@@ -473,7 +450,7 @@ async function loadConversation(conversationId) {
 async function createConversationIfNeeded() {
   if (!currentUser) return null;
 
-  // Se non c'è conversazione corrente, la creiamo SOLO quando inviamo un messaggio (non quando clicchiamo "Nuova chat")
+  // crea la chat solo al primo invio
   if (currentConversationId) return currentConversationId;
 
   const data = await apiFetchJson("/api/conversations", {
@@ -487,18 +464,14 @@ async function createConversationIfNeeded() {
 }
 
 newChatBtn?.addEventListener("click", async () => {
-  // non creare nel DB qui: reset UI e basta
+  // qui resetto solo la ui
   currentConversationId = null;
   clearMessages();
   showGreeting();
 
-  // UI: deseleziona in lista
   document.querySelectorAll(".conv-item").forEach((x) => x.classList.remove("active"));
 });
 
-// =========================
-// Chat send
-// =========================
 async function sendMessage(text) {
   const msg = (text || "").trim();
   if (!msg) return;
@@ -506,13 +479,13 @@ async function sendMessage(text) {
   appendBubble(msg, "user");
   inputEl && (inputEl.value = "");
 
-  // show typing bubble
+  // placeholder mentre aspetto la risposta
   const typing = appendBubble("…", "bot", "typing");
 
   try {
     let convoId = currentConversationId;
 
-    // se loggato, crea conversazione SOLO al primo invio
+    // se serve apro la conversazione prima di inviare
     if (currentUser && !convoId) {
       convoId = await createConversationIfNeeded();
     }
@@ -534,12 +507,11 @@ async function sendMessage(text) {
       suggestions: data.suggestions || [],
     });
 
-    // se per qualche motivo il backend assegna un conversation_id (es. prima chat), prendilo
+    // se il backend ritorna id chat lo salvo e aggiorno la lista
     if (!currentConversationId && data.conversation_id) {
       currentConversationId = Number(data.conversation_id);
       await refreshConversations();
 
-      // seleziona la conversazione appena creata
       const btn = conversationsList?.querySelector(`[data-conversation-id="${currentConversationId}"]`);
       btn?.classList.add("active");
     }
@@ -561,7 +533,7 @@ inputEl?.addEventListener("keydown", (e) => {
   }
 });
 
-// Init
+// avvio iniziale della ui
 (async function init() {
   await refreshMe();
   updateChatLayout();

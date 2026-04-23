@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import hashlib
 import os
@@ -15,16 +15,15 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 from werkzeug.security import check_password_hash, generate_password_hash
 
-# Configurazione percorsi principali
+# percorsi base usati in tutta l'app
 BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "static"
 TEMPLATES_DIR = BASE_DIR / "templates"
 
-# Carica variabili d'ambiente dal file .env
+# carica il file env
 load_dotenv(BASE_DIR / ".env")
 
-# Dizionario per normalizzare le domande: trasforma abbreviazioni comuni in termini completi
-# Es "m365" in "microsoft 365", "2fa" in "autenticazione a due fattori"
+# normalizzazione semplice per domande scritte in modo diverso
 FAQ_SYNONYMS = {
     "m365": "microsoft 365",
     "office365": "microsoft 365",
@@ -40,19 +39,16 @@ FAQ_SYNONYMS = {
     "mfa": "autenticazione a due fattori",
 }
 
-# Cache globale per l'indice FAQ: evita di ricostruire l'indice TF-IDF ad ogni ricerca
+# cache in memoria per non rifare gli indici a ogni richiesta
 FAQ_CACHE: Dict[str, Any] = {"fingerprint": None}
 
 
 def parse_admin_users(raw: Optional[str]) -> set[str]:
-    """Converte una stringa di username separati da virgole in un set.
-    Utile per leggere la lista di admin dal .env"""
     value = raw or "admin"
     return {item.strip() for item in value.split(",") if item.strip()}
 
 
 def create_app() -> Flask:
-    """Crea e configura l'applicazione Flask con tutti i parametri da variabili d'ambiente"""
     app = Flask(__name__, static_folder=str(STATIC_DIR), template_folder=str(TEMPLATES_DIR))
     app.config.from_mapping(
         {
@@ -61,13 +57,11 @@ def create_app() -> Flask:
             "TEMPLATES_DIR": str(TEMPLATES_DIR),
             "SECRET_KEY": os.getenv("SECRET_KEY", "CHANGE_ME_PLEASE"),
             "PERMANENT_SESSION_LIFETIME": timedelta(hours=int(os.getenv("ADMIN_SESSION_HOURS", "12"))),
-            # Parametri di connessione al database MySQL
             "DB_HOST": os.getenv("DB_HOST", "127.0.0.1"),
             "DB_USER": os.getenv("DB_USER", "root"),
             "DB_PASSWORD": os.getenv("DB_PASSWORD", ""),
             "DB_NAME": os.getenv("DB_NAME", "chatbot"),
             "DB_PORT": int(os.getenv("DB_PORT", "3306")),
-            # Soglie di similarità per il matching FAQ
             "SIM_THRESHOLD": float(os.getenv("SIM_THRESHOLD", "0.25")),
             "SIM_ALPHA_WORD": float(os.getenv("SIM_ALPHA_WORD", "0.65")),
             "SIM_LOW_HINT": float(os.getenv("SIM_LOW_HINT", "0.12")),
@@ -88,7 +82,6 @@ def create_app() -> Flask:
 
 
 def get_connection():
-    """Crea una nuova connessione al database MySQL"""
     return mysql.connector.connect(
         host=current_app.config["DB_HOST"],
         user=current_app.config["DB_USER"],
@@ -99,7 +92,6 @@ def get_connection():
 
 
 def current_user() -> Optional[Dict[str, Any]]:
-    """Recupera l'utente attualmente loggato dalla sessione"""
     uid = session.get("user_id")
     username = session.get("username")
     if uid and username:
@@ -108,25 +100,21 @@ def current_user() -> Optional[Dict[str, Any]]:
 
 
 def set_user_session(user_id: int, username: str):
-    """Salva i dati utente nella sessione (permanente)"""
     session.permanent = True
     session["user_id"] = int(user_id)
     session["username"] = username
 
 
 def clear_user_session():
-    """Cancella i dati utente dalla sessione"""
     session.pop("user_id", None)
     session.pop("username", None)
 
 
 def hash_password_new(password_plain: str) -> str:
-    """Crea un hash bcrypt da una password in chiaro"""
     return generate_password_hash(password_plain)
 
 
 def apply_synonyms(text: str) -> str:
-    """Sostituisce abbreviazioni con i termini standard definiti in FAQ_SYNONYMS"""
     value = text
     for key, replacement in FAQ_SYNONYMS.items():
         value = re.sub(rf"\b{re.escape(key)}\b", replacement, value)
@@ -134,7 +122,6 @@ def apply_synonyms(text: str) -> str:
 
 
 def clean_text(text: str) -> str:
-    """Normalizza il testo: lowercase, applica sinonimi, rimuove punteggiatura, collassa spazi"""
     value = (text or "").lower()
     value = apply_synonyms(value)
     value = re.sub(r"[^\w\s]", " ", value, flags=re.UNICODE)
@@ -143,20 +130,18 @@ def clean_text(text: str) -> str:
 
 
 def humanize_answer(answer: str) -> str:
-    """Formatta la risposta: se è lunga e senza lista, la converte in bullet points"""
     value = (answer or "").strip()
     if not value:
         return value
 
     parts = [p.strip() for p in re.split(r"\n+|\.\s+", value) if p.strip()]
-    if len(value) >= 160 and len(parts) >= 4 and not value.lstrip().startswith(("- ", "• ", "1) ", "1. ", "* ")):
+    if len(value) >= 160 and len(parts) >= 4 and not value.lstrip().startswith(("- ", "1) ", "1. ", "* ")):
         return "\n".join(f"- {p}" for p in parts)
 
     return value
 
 
 def get_all_faqs() -> List[Dict[str, Any]]:
-    """Recupera tutte le FAQ dal database"""
     conn = get_connection()
     cur = conn.cursor(dictionary=True)
     cur.execute("SELECT id, domanda, risposta1, risposta2, risposta3 FROM faq")
@@ -167,7 +152,6 @@ def get_all_faqs() -> List[Dict[str, Any]]:
 
 
 def fingerprint_faqs(faqs: List[Dict[str, Any]]) -> str:
-    """Calcola un hash SHA256 di tutte le FAQ per capire se sono cambiate"""
     digest = hashlib.sha256()
     for row in faqs:
         digest.update(str(row.get("id")).encode())
@@ -179,22 +163,18 @@ def fingerprint_faqs(faqs: List[Dict[str, Any]]) -> str:
 
 
 def build_faq_index(faqs: List[Dict[str, Any]]):
-    """Costruisce gli indici TF-IDF per il matching semantico"""
     questions_clean = [clean_text(row.get("domanda") or "") for row in faqs]
-    
-    # Index basato su parole (1-2 word tokens)
+
+    # doppio indice: parole per il significato, caratteri per tollerare typo
     vec_word = TfidfVectorizer(ngram_range=(1, 2), min_df=1)
     x_word = vec_word.fit_transform(questions_clean)
-    
-    # Index basato su caratteri (3-5 char tokens) - utile per typo tolerance
     vec_char = TfidfVectorizer(analyzer="char_wb", ngram_range=(3, 5), min_df=1)
     x_char = vec_char.fit_transform(questions_clean)
-    
+
     return questions_clean, vec_word, x_word, vec_char, x_char
 
 
 def get_faq_index(faqs: List[Dict[str, Any]]):
-    """Ritorna l'indice FAQ dal cache o lo ricostruisce se le FAQ sono cambiate"""
     fingerprint = fingerprint_faqs(faqs)
     if FAQ_CACHE.get("fingerprint") != fingerprint:
         questions_clean, vec_word, x_word, vec_char, x_char = build_faq_index(faqs)
@@ -213,7 +193,6 @@ def get_faq_index(faqs: List[Dict[str, Any]]):
 
 
 def score_faqs(user_clean: str, cache: Dict[str, Any]):
-    """Calcola i similarity score per una domanda utente"""
     q_word = cache["vec_word"].transform([user_clean])
     q_char = cache["vec_char"].transform([user_clean])
     sim_word = cosine_similarity(q_word, cache["x_word"])[0]
@@ -224,7 +203,6 @@ def score_faqs(user_clean: str, cache: Dict[str, Any]):
 
 
 def match_faq(user_message: str) -> Dict[str, Any]:
-    """Trova la FAQ più rilevante per la domanda dell'utente"""
     faqs = get_all_faqs()
     if not faqs:
         return {
@@ -238,7 +216,7 @@ def match_faq(user_message: str) -> Dict[str, Any]:
     user_clean = clean_text(user_message)
     if not user_clean:
         return {
-            "reply": "Puoi riformulare con più dettagli?",
+            "reply": "Puoi riformulare con piu dettagli?",
             "matched_id": None,
             "similarity": 0.0,
             "suggestions": [],
@@ -284,14 +262,14 @@ def match_faq(user_message: str) -> Dict[str, Any]:
     if suggestions and float(suggestions[0]["score"]) >= current_app.config["SIM_LOW_HINT"]:
         reply = (
             "Non sono sicuro al 100% di cosa intendi. "
-            "Puoi dirmi quale di questi casi è più vicino?\n\n"
+            "Puoi dirmi quale di questi casi e piu vicino?\n\n"
             + "\n".join([f"{idx + 1}) {item['domanda']}" for idx, item in enumerate(suggestions)])
-            + "\n\nRispondi con il numero (1/2/3) oppure aggiungi un dettaglio in più."
+            + "\n\nRispondi con il numero (1/2/3) oppure aggiungi un dettaglio in piu."
         )
     else:
         reply = (
             "Non ho trovato una risposta precisa. "
-            "Puoi aggiungere un dettaglio in più, ad esempio prodotto, errore o schermata?"
+            "Puoi aggiungere un dettaglio in piu, ad esempio prodotto, errore o schermata?"
         )
 
     return {
@@ -304,7 +282,6 @@ def match_faq(user_message: str) -> Dict[str, Any]:
 
 
 def dt_to_str(value: Any) -> Any:
-    """Converte datetime/date in stringa ISO per la serializzazione JSON"""
     if isinstance(value, datetime):
         return value.strftime("%Y-%m-%d %H:%M:%S")
     if isinstance(value, date):
@@ -313,12 +290,10 @@ def dt_to_str(value: Any) -> Any:
 
 
 def normalize_rows(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """Applica dt_to_str a tutti i valori di tutte le righe"""
     return [{k: dt_to_str(v) for k, v in (row or {}).items()} for row in (rows or [])]
 
 
 def create_conversation(conn, user_id: int, title: str) -> int:
-    """Crea una nuova conversazione per l'utente"""
     cur = conn.cursor()
     cur.execute(
         "INSERT INTO conversations (user_id, title, created_at, updated_at) VALUES (%s, %s, NOW(), NOW())",
@@ -331,7 +306,6 @@ def create_conversation(conn, user_id: int, title: str) -> int:
 
 
 def ensure_conversation_belongs(conn, conversation_id: int, user_id: int) -> bool:
-    """Verifica che una conversazione appartenga all'utente"""
     cur = conn.cursor()
     cur.execute(
         "SELECT id FROM conversations WHERE id=%s AND user_id=%s LIMIT 1",
@@ -343,7 +317,6 @@ def ensure_conversation_belongs(conn, conversation_id: int, user_id: int) -> boo
 
 
 def touch_conversation(conn, conversation_id: int):
-    """Aggiorna il timestamp di una conversazione"""
     cur = conn.cursor()
     cur.execute("UPDATE conversations SET updated_at=NOW() WHERE id=%s", (int(conversation_id),))
     conn.commit()
@@ -351,7 +324,6 @@ def touch_conversation(conn, conversation_id: int):
 
 
 def set_conversation_title(conn, conversation_id: int, user_id: int, title: str) -> bool:
-    """Aggiorna il titolo di una conversazione"""
     title = (title or "").strip()[:120]
     if not title:
         return False
@@ -369,7 +341,6 @@ def set_conversation_title(conn, conversation_id: int, user_id: int, title: str)
 
 
 def list_conversations_for_user(user_id: int) -> List[Dict[str, Any]]:
-    """Recupera tutte le conversazioni di un utente"""
     conn = get_connection()
     cur = conn.cursor(dictionary=True)
     cur.execute(
@@ -383,7 +354,6 @@ def list_conversations_for_user(user_id: int) -> List[Dict[str, Any]]:
 
 
 def get_conversation(user_id: int, conversation_id: int) -> Optional[Dict[str, Any]]:
-    """Recupera una singola conversazione"""
     conn = get_connection()
     cur = conn.cursor(dictionary=True)
     cur.execute(
@@ -399,7 +369,6 @@ def get_conversation(user_id: int, conversation_id: int) -> Optional[Dict[str, A
 
 
 def get_messages(user_id: int, conversation_id: int) -> List[Dict[str, Any]]:
-    """Recupera tutti i messaggi di una conversazione"""
     conn = get_connection()
     if not ensure_conversation_belongs(conn, int(conversation_id), int(user_id)):
         conn.close()
@@ -440,7 +409,6 @@ def insert_log_message(
     user_id: Optional[int],
     conversation_id: Optional[int],
 ) -> Optional[int]:
-    """Salva uno scambio user->bot nel database"""
     try:
         conn = get_connection()
         cur = conn.cursor()
@@ -470,7 +438,6 @@ def insert_log_message(
 
 
 def handle_chat(user_msg: str, user_id: Optional[int], conversation_id: Optional[int]):
-    """Gestisce un messaggio chat: matching FAQ, salvataggio log"""
     user_msg = (user_msg or "").strip()
     if not user_msg:
         return jsonify(
@@ -482,6 +449,7 @@ def handle_chat(user_msg: str, user_id: Optional[int], conversation_id: Optional
             }
         )
 
+    # se l'utente e loggato ma non ha chat attiva ne apriamo una nuova
     if user_id and not conversation_id:
         try:
             conn = get_connection()
@@ -518,6 +486,7 @@ def handle_chat(user_msg: str, user_id: Optional[int], conversation_id: Optional
         conversation_id=conversation_id,
     )
 
+    # aggiorna titolo e ultimo utilizzo della conversazione
     if user_id and conversation_id:
         try:
             conn = get_connection()
@@ -557,28 +526,24 @@ def handle_chat(user_msg: str, user_id: Optional[int], conversation_id: Optional
 
 
 def admin_required():
-    """Verifica se l'admin è loggato"""
     if not session.get("admin_user_id"):
         return redirect(url_for("admin_login"))
     return None
 
 
 def register_routes(app: Flask):
-    """Registra tutti gli endpoint Flask"""
-    
+    # tutte le rotte http sono registrate qui
+
     @app.get("/")
     def home():
-        """Pagina principale"""
         return send_from_directory(current_app.config["STATIC_DIR"], "index.html")
 
     @app.get("/static/<path:filename>")
     def static_files(filename: str):
-        """Serve file statici"""
         return send_from_directory(current_app.config["STATIC_DIR"], filename)
 
     @app.get("/favicon.ico")
     def favicon():
-        """Serve il favicon"""
         try:
             return send_from_directory(current_app.config["STATIC_DIR"], "favicon.ico")
         except Exception:
@@ -587,12 +552,10 @@ def register_routes(app: Flask):
     @app.get("/me")
     @app.get("/auth/me")
     def me():
-        """Ritorna i dati utente attualmente loggato"""
         return jsonify({"user": current_user()})
 
     @app.post("/auth/register")
     def register():
-        """Registra un nuovo utente"""
         data = request.get_json(silent=True) or {}
         username = (data.get("username") or "").strip()
         password = (data.get("password") or "").strip()
@@ -607,7 +570,7 @@ def register_routes(app: Flask):
         if cur.fetchone():
             cur.close()
             conn.close()
-            return jsonify({"ok": False, "error": "Username già esistente."}), 400
+            return jsonify({"ok": False, "error": "Username gia esistente."}), 400
 
         pw_hash = hash_password_new(password)
         cur2 = conn.cursor()
@@ -626,7 +589,6 @@ def register_routes(app: Flask):
 
     @app.post("/auth/login")
     def login():
-        """Effettua il login utente"""
         data = request.get_json(silent=True) or {}
         username = (data.get("username") or "").strip()
         password = (data.get("password") or "").strip()
@@ -655,7 +617,6 @@ def register_routes(app: Flask):
 
     @app.post("/auth/logout")
     def logout():
-        """Effettua il logout"""
         clear_user_session()
         session.pop("admin_user_id", None)
         session.pop("admin_username", None)
@@ -663,7 +624,6 @@ def register_routes(app: Flask):
 
     @app.get("/api/conversations")
     def api_list_conversations():
-        """Ritorna la lista di conversazioni"""
         user = current_user()
         if not user:
             return jsonify({"ok": True, "conversations": []})
@@ -671,7 +631,6 @@ def register_routes(app: Flask):
 
     @app.post("/api/conversations")
     def api_create_conversation():
-        """Crea una nuova conversazione"""
         user = current_user()
         if not user:
             return jsonify({"ok": False, "error": "Non autorizzato"}), 401
@@ -688,7 +647,6 @@ def register_routes(app: Flask):
 
     @app.get("/api/conversations/<int:conversation_id>")
     def api_get_conversation(conversation_id: int):
-        """Recupera una conversazione e i suoi messaggi"""
         user = current_user()
         if not user:
             return jsonify({"ok": False, "error": "Non autorizzato"}), 401
@@ -706,7 +664,6 @@ def register_routes(app: Flask):
 
     @app.get("/api/conversations/<int:conversation_id>/messages")
     def api_get_messages(conversation_id: int):
-        """Recupera solo i messaggi di una conversazione"""
         user = current_user()
         if not user:
             return jsonify({"ok": False, "error": "Non autorizzato"}), 401
@@ -720,7 +677,6 @@ def register_routes(app: Flask):
 
     @app.post("/api/conversations/<int:conversation_id>/messages")
     def api_post_message(conversation_id: int):
-        """Invia un messaggio in una conversazione"""
         user = current_user()
         if not user:
             return jsonify({"ok": False, "error": "Non autorizzato"}), 401
@@ -735,7 +691,6 @@ def register_routes(app: Flask):
     @app.post("/chat")
     @app.post("/ask")
     def chat():
-        """Endpoint principale per il chat"""
         data = request.get_json(silent=True) or {}
         user_msg = (data.get("message") or data.get("question") or "").strip()
         conversation_id = data.get("conversation_id")
@@ -751,7 +706,6 @@ def register_routes(app: Flask):
 
     @app.post("/feedback")
     def feedback():
-        """Salva il feedback dell'utente"""
         data = request.get_json(silent=True) or {}
         try:
             log_id = int(data.get("log_id"))
@@ -807,14 +761,12 @@ def register_routes(app: Flask):
 
     @app.get("/admin/login")
     def admin_login():
-        """Pagina di login admin"""
         if session.get("admin_user_id"):
             return redirect(url_for("admin_dashboard"))
         return render_template("admin_login.html", error=None)
 
     @app.post("/admin/login")
     def admin_login_post():
-        """Effettua il login admin"""
         username = (request.form.get("username") or "").strip()
         password = (request.form.get("password") or "").strip()
 
@@ -846,14 +798,12 @@ def register_routes(app: Flask):
 
     @app.get("/admin/logout")
     def admin_logout():
-        """Logout admin"""
         session.pop("admin_user_id", None)
         session.pop("admin_username", None)
         return redirect(url_for("admin_login"))
 
     @app.get("/admin")
     def admin_dashboard():
-        """Dashboard admin"""
         redirect_response = admin_required()
         if redirect_response:
             return redirect_response
@@ -928,7 +878,6 @@ def register_routes(app: Flask):
 
     @app.get("/admin/faqs")
     def admin_faqs():
-        """Elenco FAQ"""
         redirect_response = admin_required()
         if redirect_response:
             return redirect_response
@@ -942,13 +891,12 @@ def register_routes(app: Flask):
 
         for row in rows:
             question = (row.get("domanda") or "").strip()
-            row["domanda_short"] = (question[:90] + "…") if len(question) > 90 else question
+            row["domanda_short"] = (question[:90] + "...") if len(question) > 90 else question
 
         return render_template("admin_faqs.html", rows=rows)
 
     @app.get("/admin/faqs/new")
     def admin_faq_new():
-        """Pagina creazione FAQ"""
         redirect_response = admin_required()
         if redirect_response:
             return redirect_response
@@ -963,7 +911,6 @@ def register_routes(app: Flask):
 
     @app.post("/admin/faqs/new")
     def admin_faq_new_post():
-        """Salva nuova FAQ"""
         redirect_response = admin_required()
         if redirect_response:
             return redirect_response
@@ -1003,7 +950,6 @@ def register_routes(app: Flask):
 
     @app.get("/admin/faqs/edit/<int:faq_id>")
     def admin_faq_edit(faq_id: int):
-        """Pagina modifica FAQ"""
         redirect_response = admin_required()
         if redirect_response:
             return redirect_response
@@ -1031,7 +977,6 @@ def register_routes(app: Flask):
 
     @app.post("/admin/faqs/edit/<int:faq_id>")
     def admin_faq_edit_post(faq_id: int):
-        """Salva modifiche FAQ"""
         redirect_response = admin_required()
         if redirect_response:
             return redirect_response
@@ -1076,7 +1021,6 @@ def register_routes(app: Flask):
 
     @app.post("/admin/faqs/delete/<int:faq_id>")
     def admin_faq_delete(faq_id: int):
-        """Cancella FAQ"""
         redirect_response = admin_required()
         if redirect_response:
             return redirect_response
